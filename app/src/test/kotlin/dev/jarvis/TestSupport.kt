@@ -1,7 +1,11 @@
 package dev.jarvis
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.room3.Room
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import dev.jarvis.claude.UsageMeter
+import dev.jarvis.data.db.JarvisDatabase
+import kotlinx.coroutines.Dispatchers
 import dev.jarvis.security.SecretKey
 import dev.jarvis.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
@@ -23,12 +27,17 @@ class FakeSecretStore(initial: Map<SecretKey, String> = emptyMap()) : SecretStor
     override fun presence(): Flow<Set<SecretKey>> = values.map { it.keys }
 }
 
-fun tempUsageMeter(scope: CoroutineScope): UsageMeter {
-    val dir: File = Files.createTempDirectory("usage").toFile()
-    val store = PreferenceDataStoreFactory.createWithPath(scope = scope) {
-        File(dir, "usage.preferences_pb").toOkioPath()
-    }
-    return UsageMeter(store, testJson)
+/** Fresh in-memory Room database on the host JVM (bundled SQLite; no device or Robolectric). */
+fun testDb(): JarvisDatabase = Room.inMemoryDatabaseBuilder<JarvisDatabase>()
+    .setDriver(BundledSQLiteDriver())
+    .setQueryCoroutineContext(Dispatchers.IO)
+    .build()
+
+fun tempUsageMeter(db: JarvisDatabase = testDb()): UsageMeter = UsageMeter(db.usage())
+
+/** A file-backed DataStore in a fresh temp dir (one per test: Windows can't rename over an open file). */
+fun tempDataStore(scope: CoroutineScope) = PreferenceDataStoreFactory.createWithPath(scope = scope) {
+    File(Files.createTempDirectory("ds").toFile(), "test.preferences_pb").toOkioPath()
 }
 
 /** Builds an SSE body from (event, json) pairs. */

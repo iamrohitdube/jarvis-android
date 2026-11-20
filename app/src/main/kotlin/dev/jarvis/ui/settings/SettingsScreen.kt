@@ -30,6 +30,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jarvis.agent.Models
 import dev.jarvis.data.AppSettings
+import dev.jarvis.ui.history.ConfirmDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +52,7 @@ fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = hiltViewModel()) 
             ConnectorsSection(vm)
             settings?.let { ModelSection(vm, it) }
             settings?.let { BudgetSection(vm, it) }
+            settings?.let { DataSection(vm, it) }
         }
     }
 }
@@ -87,6 +89,34 @@ private fun BudgetSection(vm: SettingsViewModel, s: AppSettings) {
         )
         OutlinedButton(onClick = { vm.setBudget(text.ifBlank { "0" }) }) { Text("Save budget") }
         ToggleRow("Stop requests when the budget is used up", s.stopAtBudget, vm::setStopAtBudget)
+    }
+}
+
+@Composable
+private fun DataSection(vm: SettingsViewModel, s: AppSettings) {
+    var minutes by remember(s.snapshotMaxAgeMinutes) { mutableStateOf(s.snapshotMaxAgeMinutes.toString()) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val message by vm.dataMessage.collectAsStateWithLifecycle()
+    SectionCard("Data on this phone") {
+        Hint("Chats, saved portfolio data, usage and the audit log stay on this phone and are excluded from backups.")
+        Hint("Reusing recent portfolio data saves a connector call. Say \"refresh\" or \"latest\" to fetch it live.")
+        OutlinedTextField(
+            minutes, { minutes = it }, label = { Text("Reuse portfolio data for (minutes, 0 = always live)") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.setSnapshotMinutes(minutes) }) { Text("Save") }
+            OutlinedButton(onClick = vm::clearSnapshots) { Text("Clear saved data") }
+        }
+        OutlinedButton(onClick = { confirmDelete = true }) { Text("Delete all chat history") }
+        message?.let { Hint(it) }
+    }
+    if (confirmDelete) {
+        ConfirmDialog(
+            "Delete all history?", "Every saved conversation will be removed from this phone. This can't be undone.",
+            onConfirm = vm::deleteAllHistory, onDismiss = { confirmDelete = false },
+        )
     }
 }
 

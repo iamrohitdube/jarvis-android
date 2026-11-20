@@ -18,7 +18,9 @@ import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jarvis.data.AppSettings
 import dev.jarvis.data.SettingsRepository
+import dev.jarvis.ui.audit.AuditScreen
 import dev.jarvis.ui.chat.ChatScreen
+import dev.jarvis.ui.history.HistoryScreen
 import dev.jarvis.ui.onboarding.OnboardingScreen
 import dev.jarvis.ui.settings.SettingsScreen
 import dev.jarvis.ui.theme.JarvisTheme
@@ -30,6 +32,8 @@ object Routes {
     const val CHAT = "chat"
     const val SETTINGS = "settings"
     const val USAGE = "usage"
+    const val HISTORY = "history"
+    const val AUDIT = "audit"
 }
 
 @AndroidEntryPoint
@@ -65,8 +69,12 @@ private fun JarvisNavHost(initial: AppSettings) {
             ChatScreen(
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                 onOpenUsage = { nav.navigate(Routes.USAGE) },
+                onOpenHistory = { nav.navigate(Routes.HISTORY) },
+                onOpenAudit = { nav.navigate(Routes.AUDIT) },
             )
         }
+        composable(Routes.HISTORY) { HistoryScreen(onBack = { nav.popBackStack() }, onOpened = { nav.popBackStack() }) }
+        composable(Routes.AUDIT) { AuditScreen(onBack = { nav.popBackStack() }) }
         composable(Routes.SETTINGS) { SettingsScreen(onBack = { nav.popBackStack() }) }
         composable(Routes.USAGE) { UsageScreen(onBack = { nav.popBackStack() }) }
     }

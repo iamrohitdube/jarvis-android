@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import dev.jarvis.agent.Models
 import kotlinx.coroutines.flow.Flow
@@ -31,12 +32,15 @@ data class AppSettings(
     val monthlyBudgetUsd: Double = DEFAULT_BUDGET_USD,
     /** Refuse new requests once the local monthly estimate reaches the budget. */
     val stopAtBudget: Boolean = true,
+    /** Reuse cached connector snapshots (e.g. net worth) younger than this; 0 = always fetch live. */
+    val snapshotMaxAgeMinutes: Int = DEFAULT_SNAPSHOT_MINUTES,
     val onboarding: Map<OnboardingStep, StepStatus> = OnboardingStep.entries.associateWith { StepStatus.TODO },
 ) {
     val onboardingComplete: Boolean get() = onboarding.values.none { it == StepStatus.TODO }
 
     companion object {
         const val DEFAULT_BUDGET_USD = 5.0
+        const val DEFAULT_SNAPSHOT_MINUTES = 15
     }
 }
 
@@ -50,6 +54,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             serverFallback = p[SERVER_FALLBACK] ?: true,
             monthlyBudgetUsd = p[BUDGET] ?: AppSettings.DEFAULT_BUDGET_USD,
             stopAtBudget = p[STOP_AT_BUDGET] ?: true,
+            snapshotMaxAgeMinutes = p[SNAPSHOT_MINUTES] ?: AppSettings.DEFAULT_SNAPSHOT_MINUTES,
             onboarding = OnboardingStep.entries.associateWith { step ->
                 p[stepKey(step)]?.let { runCatching { StepStatus.valueOf(it) }.getOrNull() } ?: StepStatus.TODO
             },
@@ -64,6 +69,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setServerFallback(v: Boolean) = store.edit { it[SERVER_FALLBACK] = v }
     suspend fun setMonthlyBudget(usd: Double) = store.edit { it[BUDGET] = usd.coerceAtLeast(0.0) }
     suspend fun setStopAtBudget(v: Boolean) = store.edit { it[STOP_AT_BUDGET] = v }
+    suspend fun setSnapshotMaxAgeMinutes(v: Int) = store.edit { it[SNAPSHOT_MINUTES] = v.coerceIn(0, 24 * 60) }
     suspend fun setStep(step: OnboardingStep, status: StepStatus) = store.edit { it[stepKey(step)] = status.name }
 
     private companion object {
@@ -73,6 +79,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val SERVER_FALLBACK = booleanPreferencesKey("server_fallback")
         val BUDGET = doublePreferencesKey("monthly_budget_usd")
         val STOP_AT_BUDGET = booleanPreferencesKey("stop_at_budget")
+        val SNAPSHOT_MINUTES = intPreferencesKey("snapshot_max_age_minutes")
         fun stepKey(step: OnboardingStep) = stringPreferencesKey("onboarding_${step.name.lowercase()}")
     }
 }

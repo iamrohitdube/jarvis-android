@@ -9,6 +9,12 @@ import dev.jarvis.connectors.ConnectorStatus
 import dev.jarvis.connectors.ConnectorTestResult
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
 import dev.jarvis.data.AppSettings
+import dev.jarvis.data.AuditCategory
+import dev.jarvis.data.AuditEvent
+import dev.jarvis.data.AuditLog
+import dev.jarvis.data.SnapshotStore
+import dev.jarvis.memory.HistoryStore
+import dev.jarvis.ui.chat.CurrentConversation
 import dev.jarvis.data.OnboardingStep
 import dev.jarvis.data.SettingsRepository
 import dev.jarvis.data.StepStatus
@@ -30,7 +36,14 @@ class SettingsViewModel @Inject constructor(
     private val llm: LlmClient,
     private val indMoney: IndMoneyConnector,
     private val signInEvents: SignInEvents,
+    private val snapshots: SnapshotStore,
+    private val history: HistoryStore,
+    private val current: CurrentConversation,
+    private val audit: AuditLog,
 ) : ViewModel() {
+
+    /** Result line for the Data section. */
+    val dataMessage = MutableStateFlow<String?>(null)
 
     val settings: StateFlow<AppSettings?> = repo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val hasApiKey: StateFlow<Boolean> = secrets.presence().map { SecretKey.ANTHROPIC_API_KEY in it }
@@ -108,6 +121,26 @@ class SettingsViewModel @Inject constructor(
     fun setRouteSimple(v: Boolean) = viewModelScope.launch { repo.setRouteSimpleToQuick(v) }
     fun setServerFallback(v: Boolean) = viewModelScope.launch { repo.setServerFallback(v) }
     fun setBudget(text: String) = viewModelScope.launch { text.toDoubleOrNull()?.let { repo.setMonthlyBudget(it) } }
+    fun setSnapshotMinutes(text: String) = viewModelScope.launch {
+        val v = text.trim().toIntOrNull()
+        if (v == null || v < 0) { dataMessage.value = "Enter minutes as a whole number (0 = always live)."; return@launch }
+        repo.setSnapshotMaxAgeMinutes(v)
+        dataMessage.value = if (v == 0) "Portfolio data will always be fetched live." else "Saved portfolio data will be reused for $v min."
+    }
+
+    fun clearSnapshots() = viewModelScope.launch {
+        snapshots.clear()
+        audit.record(AuditEvent(AuditCategory.DATA, "clear_saved_data", "ok"))
+        dataMessage.value = "Saved portfolio data cleared."
+    }
+
+    fun deleteAllHistory() = viewModelScope.launch {
+        history.deleteAll()
+        current.open(null)
+        audit.record(AuditEvent(AuditCategory.DATA, "delete_all_history", "ok"))
+        dataMessage.value = "All chat history deleted."
+    }
+
     fun setStopAtBudget(v: Boolean) = viewModelScope.launch { repo.setStopAtBudget(v) }
     fun setStep(step: OnboardingStep, status: StepStatus) = viewModelScope.launch { repo.setStep(step, status) }
 

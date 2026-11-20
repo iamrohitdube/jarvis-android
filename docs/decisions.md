@@ -87,3 +87,27 @@ preamble, filler, markdown or follow-up offers. The persona prompt enforces this
 300 tokens (thinking off), chat route 1200 (thinking and tool calls count toward it). Asking for more ("tell me
 more", "explain", "details", "elaborate", "break it down") routes to a DETAIL mode on the chat model, which allows
 up to about 6 sentences (1500 tokens). Detection is by keyword in `ToolRouter`, so it costs no extra call.
+
+## D13. Room 3 for local data (Phase 2, 2026-11-20)
+Room 3.0.3 (`androidx.room3`), not Room 2.8.5. Both are maintained. Room 3 is the current major line, coroutine-only
+and KSP-only, which matches this codebase. It can also build an in-memory database without an Android Context, so
+DAO tests run as plain JVM unit tests with `sqlite-bundled-jvm` (no device, no Robolectric). The app uses the
+phone's built-in SQLite (`AndroidSQLiteDriver`) to keep the APK small. Search is a plain `LIKE` over titles and
+message text, which is enough at personal scale and avoids FTS4/FTS5 differences between Room 3 and device SQLite
+builds. Snapshots use `@Insert(onConflict = REPLACE)` instead of `@Upsert`, because `@Upsert` sniffs SQLite error
+messages, which the host-JVM Android stubs don't provide. The Phase 1 DataStore usage log is imported once at
+start-up and then removed.
+
+## D14. Saved connector data ("snapshots") and the database at rest (Phase 2)
+- **What's cached:** only whole-account INDmoney reads (`networth_snapshot`, `networth_holdings`, the two SIP
+  tools, `user_watchlist`). A result is saved only when the call had no filter arguments, so a saved result always
+  means the same as a fresh call. Live market data (prices, option chains, fund details) is never cached.
+- **Reuse:** if every tool a question needs has a saved result younger than the reuse window (default 15 min,
+  0 = off), the request goes out with no MCP server or tools. The saved data is attached to the question as an
+  untrusted `<cached_data>` block. That skips the INDmoney round-trip and its tool-definition and tool-result
+  tokens. "Refresh", "latest", "live", "update" and similar words force a live fetch.
+- **Labels:** every reply that used connector data shows its source and time: "updated 10:42" (live) or "saved data
+  from 10:30" (cached).
+- **At rest:** the database relies on Android's app sandbox and file-based encryption, with no app-level
+  encryption. Adding SQLCipher (or similar) costs APK size and a key-management design. We'll decide in Phase 3,
+  where the PIN/biometric work already handles keys.

@@ -28,6 +28,11 @@ object ToolRouter {
 
     fun wantsDetail(normalizedText: String): Boolean = DETAIL_PHRASES.any { normalizedText.contains(it) }
 
+    /** Phrases that mean "don't use saved data, fetch it now". */
+    private val FRESH_PHRASES = listOf("refresh", "latest", "live", "right now", "up to date", "up-to-date", "fresh", "update")
+
+    fun wantsFresh(userText: String): Boolean = userText.lowercase().let { t -> FRESH_PHRASES.any { t.contains(it) } }
+
     fun route(userText: String, settings: AppSettings, base: Mode = Modes.CHAT): RouteDecision {
         val text = " " + userText.lowercase().replace(Regex("\\s+"), " ") + " "
         if (base == Modes.CHAT && wantsDetail(text)) {

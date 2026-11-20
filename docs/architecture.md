@@ -1,47 +1,59 @@
-# Architecture (Phase 1)
+# Architecture (Phase 2)
 
 ```
 UI (Compose)                    Agent                         Claude / connectors
 -----------------               ------------------------      ---------------------------------
 ChatScreen ── ChatViewModel ──▶ AgentLoop.run(history, text)
-                                  │ ToolRouter (keywords → mode, model, tools)
-                                  │ Connector.mcpServer()  ──▶ IndMoneyConnector (OAuth refresh)
-                                  │ PromptBuilder (JSON body, betas)
+   │  (HistoryStore: Room)        │ budget check (UsageMeter)
+HistoryScreen                     │ ToolRouter (keywords → mode, model, tools)
+AuditScreen ◀── AuditLog          │ SnapshotStore.freshFor()  → reuse saved data, or
+UsageScreen ◀── UsageMeter        │ Connector.mcpServer()  ──▶ IndMoneyConnector (OAuth refresh)
+                                  │ PromptBuilder (JSON body, betas, cached data block)
                                   └▶ LlmClient.stream() ─────▶ AnthropicClient (OkHttp, SSE)
                                        SseParser → StreamAccumulator → StreamUpdate events
+                                  ToolCalls.extract() → SnapshotStore.save(), AuditLog, DataStamps
                                   UsageMeter.record()  (tokens, cost, latency; local only)
 SettingsScreen / Onboarding ──▶ SettingsViewModel ──▶ SecretStore (Keystore AES-GCM) / SettingsRepository
 OAuthRedirectActivity ────────▶ IndMoneyConnector.completeSignIn()
 ```
 
 ## One chat turn
-1. `ToolRouter.route()` picks a **mode** (Chat or Quick), a **model** and a **tool list** from keywords. Tool-free
-   short questions go to the quick model.
-2. For each connector the tools need, `Connector.mcpServer()` returns a config with a valid token, refreshing it if
-   it has expired. If the connector isn't signed in, the loop stops with "sign in" and doesn't call Claude.
-3. `PromptBuilder.build()` creates the body:
-   - `model`, `max_tokens`, `stream: true`
-   - automatic caching
-   - the stable persona system prompt
-   - text-only history and the new user message
-   - `output_config.effort`
-   - for tool requests: `mcp_servers` and an allowlisted `mcp_toolset` (beta `mcp-client-2025-11-20`)
-   - optional `fallbacks: "default"`
-4. `AnthropicClient.stream()` retries 408/409/429/5xx and connection errors before streaming starts. It then
-   parses SSE and emits text deltas and tool start/finish events. Cancelling the flow (Stop) cancels the HTTP call.
-5. `stop_reason: "pause_turn"`: the assistant content blocks are appended unchanged and the request is re-sent,
-   up to 3 times.
-6. If the API reports an MCP auth error (heuristic on the 400 message), the loop refreshes the token once and
-   retries. If that fails, it asks the user to sign in again.
-7. One `UsageEntry` per turn: tokens (input, output, cache write and read), estimated cost, latency, time to first
-   token, tool calls. No prompt or reply text is logged.
+1. **Budget:** if "stop at budget" is on and this month's local estimate has reached the budget, the turn ends
+   before any network call.
+2. **Route:** `ToolRouter.route()` picks a mode (Quick, Chat or Detail), a model and a tool list from keywords.
+3. **Saved data:** if every routed tool is a whole-account snapshot tool (net worth, holdings, SIPs, watchlist)
+   with a result younger than the reuse window (default 15 min), the tools are dropped and the saved results are
+   attached to the question as an untrusted `<cached_data>` block. Saying "refresh", "latest" or "live" skips this.
+4. **Connectors:** otherwise, each connector the tools need returns an MCP config with a valid token (refreshed if
+   expired). If a connector isn't signed in, the loop stops with "sign in" and doesn't call Claude.
+5. **Request:** `PromptBuilder.build()` creates the body: model, `max_tokens`, `stream`, automatic caching, the
+   stable persona, text-only history, the question (plus any cached data), `output_config.effort`, thinking off on
+   the quick route (Haiku only), and for tool requests `mcp_servers` plus an allowlisted `mcp_toolset`.
+6. **Stream:** `AnthropicClient.stream()` retries 408/409/429/5xx and connection errors before streaming starts,
+   then emits text and tool events. Stop cancels the HTTP call. `pause_turn` is resumed up to 3 times. An MCP auth
+   error triggers one token refresh and retry.
+7. **After the reply:** `ToolCalls.extract()` pairs `mcp_tool_use` with `mcp_tool_result` blocks. Each call is
+   audited. Successful whole-account calls made without arguments are saved as snapshots. The reply carries
+   `DataStamp`s, shown as "INDmoney · updated 10:42" or "saved data from 10:30".
+8. **Records:** one `UsageEntry` per turn (tokens, cost, latency) and one audit row for the request outcome. The
+   chat screen saves the question and the reply to Room.
+
+## Local data (Room 3, `jarvis.db`)
+| Table | What | Retention |
+|---|---|---|
+| `conversations`, `messages` | Full verbatim chat history; searchable (LIKE) | Until you delete it |
+| `snapshots` | Latest result of each whole-account connector read | Replaced on each fetch; "Clear saved data" in Settings |
+| `audit_log` | Requests, tool calls, connector and data events; no content | 180 days |
+| `usage_log` | Tokens, cost, latency per request; no text | ~13 months |
+
+Context sent to Claude is still only the last 8 turns, clipped (`AgentLoop.trimHistory`). Context compaction is
+Phase 7. The schema is exported to `app/schemas/` so future versions can ship tested migrations.
 
 ## Swappable interfaces
-`LlmClient`, `SecretStore`, `Connector`. Coming later: `WakeWordEngine`, `Stt`, `Tts`, `Storage` (Room).
+`LlmClient`, `SecretStore`, `Connector`, `AuditSink`. Coming later: `WakeWordEngine`, `Stt`, `Tts`.
 
-## What's in memory vs on disk (Phase 1)
-- On disk (DataStore):
-  - settings
-  - encrypted secrets
-  - the usage log (last 1000 entries)
-- In memory only: the conversation (lost when the process dies). Room-backed history arrives in Phase 2.
+## On disk vs in memory
+- DataStore: settings and encrypted secrets.
+- Room: everything in the table above.
+- In memory only: the reply currently streaming. If you tap Stop, the partial reply is saved and marked
+  "Not completed", and it's never resent as context.

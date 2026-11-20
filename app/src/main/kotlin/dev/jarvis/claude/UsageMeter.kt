@@ -4,7 +4,10 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import dev.jarvis.data.db.UsageDao
+import dev.jarvis.data.db.UsageEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -81,28 +84,52 @@ data class UsageSummary(
     }
 }
 
-/** Local-only usage log (no telemetry). Phase 2 moves this into Room. */
-class UsageMeter(private val store: DataStore<Preferences>, private val json: Json) {
-    private val key = stringPreferencesKey("usage_log_v1")
-    private val serializer = ListSerializer(UsageEntry.serializer())
-
-    val entries: Flow<List<UsageEntry>> = store.data.map { p -> decode(p[key]) }
+/** Local-only usage log in Room (no telemetry). */
+class UsageMeter(
+    private val dao: UsageDao,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    val entries: Flow<List<UsageEntry>> = dao.observeAll().map { rows -> rows.map { it.toEntry() } }
 
     suspend fun record(entry: UsageEntry) {
-        store.edit { p ->
-            val list = (decode(p[key]) + entry).takeLast(MAX_ENTRIES)
-            p[key] = json.encodeToString(serializer, list)
-        }
+        dao.insert(entry.toEntity())
     }
 
-    suspend fun clear() {
-        store.edit { it.remove(key) }
+    /** Keeps roughly 13 months so the current and previous month are always complete. */
+    suspend fun prune() = dao.deleteOlderThan(clock() - RETENTION_DAYS * 24L * 60 * 60 * 1000)
+
+    suspend fun clear() = dao.deleteAll()
+
+    /**
+     * One-time import of the Phase 1 DataStore log (JSON list under "usage_log_v1"), then removes it.
+     * Safe to call on every start: it does nothing once the old key is gone.
+     */
+    suspend fun importLegacy(store: DataStore<Preferences>, json: Json) {
+        val raw = store.data.first()[LEGACY_KEY] ?: return
+        importLegacyJson(raw, json)
+        store.edit { it.remove(LEGACY_KEY) }
     }
 
-    private fun decode(raw: String?): List<UsageEntry> =
-        raw?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() } ?: emptyList()
+    /** Imports the Phase 1 JSON list; unreadable data is skipped. Returns how many entries were imported. */
+    suspend fun importLegacyJson(raw: String, json: Json): Int {
+        val old = runCatching { json.decodeFromString(ListSerializer(UsageEntry.serializer()), raw) }.getOrDefault(emptyList())
+        if (old.isNotEmpty()) dao.insertAll(old.map { it.toEntity() })
+        return old.size
+    }
 
-    private companion object {
-        const val MAX_ENTRIES = 1000
+    companion object {
+        const val RETENTION_DAYS = 400L
+        val LEGACY_KEY = stringPreferencesKey("usage_log_v1")
     }
 }
+
+private fun UsageEntity.toEntry() = UsageEntry(
+    timestampMs, model, mode, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens,
+    costUsd, latencyMs, timeToFirstTokenMs, toolsUsed,
+)
+
+private fun UsageEntry.toEntity() = UsageEntity(
+    timestampMs = timestampMs, model = model, mode = mode, inputTokens = inputTokens, outputTokens = outputTokens,
+    cacheWriteTokens = cacheWriteTokens, cacheReadTokens = cacheReadTokens, costUsd = costUsd,
+    latencyMs = latencyMs, timeToFirstTokenMs = timeToFirstTokenMs, toolsUsed = toolsUsed,
+)

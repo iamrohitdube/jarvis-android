@@ -1,6 +1,9 @@
 package dev.jarvis.connectors.indmoney
 
 import dev.jarvis.agent.ToolRegistry
+import dev.jarvis.data.AuditCategory
+import dev.jarvis.data.AuditEvent
+import dev.jarvis.data.AuditSink
 import dev.jarvis.claude.McpServerConfig
 import dev.jarvis.connectors.Connector
 import dev.jarvis.connectors.ConnectorStatus
@@ -31,6 +34,8 @@ class IndMoneyConnector(
     private val probe: McpProbe,
     private val clock: () -> Long = System::currentTimeMillis,
     private val mcpUrl: String = MCP_URL,
+    /** Connector events (sign-in, refresh, sign-out) for the audit log. Never receives tokens. */
+    private val audit: AuditSink = AuditSink.NONE,
 ) : Connector {
     override val id = ToolRegistry.INDMONEY
     override val displayName = "INDmoney"
@@ -73,12 +78,20 @@ class IndMoneyConnector(
             val asm = metadata()
             val tokens = oauth.exchangeCode(asm, clientRegistration(asm), code, verifier, REDIRECT_URI, mcpUrl)
             saveTokens(tokens)
+        }.also { r ->
+            val detail = when {
+                r.isSuccess -> null
+                error != null -> error.take(40)
+                else -> "failed"
+            }
+            event("sign_in", if (r.isSuccess) "ok" else "failed", detail)
         }
     }
 
     /** Advanced fallback: paste an access token obtained elsewhere (no refresh possible). */
     suspend fun setManualToken(token: String) = mutex.withLock {
         saveTokens(TokenSet(token.trim(), refreshToken = null, expiresAtMs = null))
+        event("manual_token", "ok")
     }
 
     override suspend fun mcpServer(): McpServerConfig? = mutex.withLock {
@@ -94,7 +107,11 @@ class IndMoneyConnector(
         refreshLocked(TokenSet(access, secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN), null)) != null
     }
 
-    override suspend fun test(): ConnectorTestResult {
+    override suspend fun test(): ConnectorTestResult = testInner().also {
+        event("test", if (it is ConnectorTestResult.Ok) "ok" else "failed")
+    }
+
+    private suspend fun testInner(): ConnectorTestResult {
         val server = mcpServer()
             ?: return ConnectorTestResult.Failed("INDmoney is not signed in.", needsReauth = true)
         return when (val r = probe.initialize(server)) {
@@ -117,6 +134,7 @@ class IndMoneyConnector(
             SecretKey.INDMONEY_PENDING_STATE, SecretKey.INDMONEY_PENDING_VERIFIER,
         )
         needsReauth.value = false
+        event("sign_out", "ok")
     }
 
     /** Must hold [mutex]. Returns new tokens, or null (and flags re-auth) if refresh is impossible. */
@@ -127,12 +145,17 @@ class IndMoneyConnector(
             val asm = metadata()
             val fresh = oauth.refresh(asm, clientRegistration(asm), refresh, mcpUrl)
             saveTokens(fresh)
+            event("token_refresh", "ok")
             fresh
         } catch (e: OAuthException) {
             if (e.requiresReauth) needsReauth.value = true
+            event("token_refresh", "failed", if (e.requiresReauth) "reauth_needed" else null)
             null
         }
     }
+
+    private suspend fun event(action: String, outcome: String, detail: String? = null) =
+        audit.record(AuditEvent(AuditCategory.CONNECTOR, action, outcome, tool = id, method = "oauth", detail = detail))
 
     private suspend fun saveTokens(t: TokenSet) {
         secrets.put(SecretKey.INDMONEY_ACCESS_TOKEN, t.accessToken)

@@ -3,9 +3,10 @@
 A hands-free personal AI assistant for Android, powered by Claude. It runs on the phone only, with no backend
 server. You bring your own Anthropic API key.
 
-> **Status: Phase 1 (skeleton).** You can chat with Claude by text, with streamed replies, and ask about your
-> INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server. There's no voice, wake word or riding
-> mode yet. See [PROGRESS.md](PROGRESS.md) and the phase plan in [CLAUDE.md](CLAUDE.md).
+> **Status: Phase 2 (local data).** You can chat with Claude by text, with streamed replies, and ask about your
+> INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server. Chats are saved and searchable on the
+> phone, recent portfolio data is reused with a "last updated" label, and there's an audit log. There's no voice,
+> wake word or riding mode yet. See [PROGRESS.md](PROGRESS.md) and the phase plan in [CLAUDE.md](CLAUDE.md).
 
 ## Features in this build
 - Chat screen with streaming replies, a Stop button and plain-language errors with a fix button.
@@ -23,6 +24,10 @@ server. You bring your own Anthropic API key.
 - Usage screen showing tokens, estimated cost and latency per request. The monthly budget defaults to $5: it warns
   at 80% and stops requests when used up (both configurable).
 - A first-launch setup wizard (Anthropic key, connectors).
+- Chat history on the phone: searchable, deletable one by one or all at once.
+- Saved portfolio data: reused for 15 minutes (configurable) to save a connector call, always labelled
+  "updated 10:42" or "saved data from 10:30". Say "refresh" to fetch it live.
+- Audit log of requests, tool calls and sign-in events (no message content), kept 180 days.
 
 ## Setup
 1. Install the app: see [docs/install.md](docs/install.md).
@@ -39,7 +44,8 @@ That's all for Phase 1. Microphone, notifications, SMS and the others arrive wit
 each with an in-app explanation.
 
 ## Privacy and security
-- No analytics or telemetry. Usage stats stay on the phone.
+- No analytics or telemetry. Usage stats, chat history, saved data and the audit log stay on the phone and are
+  excluded from backups.
 - Your messages, plus data from connectors you use, are sent to Anthropic's API to produce answers.
 - Secrets never go in the repo, logs or backups. See [docs/security.md](docs/security.md).
 

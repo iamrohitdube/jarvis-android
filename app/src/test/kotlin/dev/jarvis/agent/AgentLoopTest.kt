@@ -13,7 +13,13 @@ import dev.jarvis.connectors.Connector
 import dev.jarvis.connectors.ConnectorStatus
 import dev.jarvis.connectors.ConnectorTestResult
 import dev.jarvis.data.AppSettings
+import dev.jarvis.data.AuditCategory
+import dev.jarvis.data.AuditEvent
+import dev.jarvis.data.AuditSink
+import dev.jarvis.data.SnapshotStore
+import kotlinx.serialization.json.Json
 import dev.jarvis.tempUsageMeter
+import dev.jarvis.testDb
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,10 +42,11 @@ import org.junit.Test
 
 class AgentLoopTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val meter = tempUsageMeter(scope)
+    private val db = testDb()
+    private val meter = tempUsageMeter(db)
     private val settings = AppSettings()
 
-    @After fun tearDown() { scope.cancel() }
+    @After fun tearDown() { scope.cancel(); db.close() }
 
     /** Scripted LLM: each call pops the next response (or throws). Records requests. */
     private class FakeLlm(vararg script: () -> List<LlmEvent>) : LlmClient {
@@ -171,7 +178,6 @@ class AgentLoopTest {
         assertTrue(trimmed[1].text.startsWith("xxx"))
     }
 
-    // One write per test: on the Windows JVM, DataStore can fail to rename over its own file on a 2nd write.
     private fun spend(usd: Double) = runBlocking {
         meter.record(UsageEntry(System.currentTimeMillis(), "claude-haiku-5-5", "chat", 1, 1, 0, 0, usd, 1, null, 0))
     }
@@ -196,6 +202,97 @@ class AgentLoopTest {
         val events = AgentLoop(FakeLlm({ reply("ok", usage = Usage()) }), emptyMap(), meter)
             .run(emptyList(), "hi", settings.copy(monthlyBudgetUsd = 5.0)).toList()
         assertTrue(events.last() is AgentEvent.Finished)
+    }
+
+    // ---- Phase 2: snapshots, data stamps, audit ----
+
+    private val snapshots = SnapshotStore(db.snapshots())
+
+    private class RecordingAudit : AuditSink {
+        val events = mutableListOf<AuditEvent>()
+        override suspend fun record(event: AuditEvent) { events += event }
+    }
+
+    private fun block(s: String) = Json.parseToJsonElement(s).jsonObject
+    private val netWorthCall = listOf(
+        block("""{"type":"mcp_tool_use","id":"t1","name":"networth_snapshot","server_name":"indmoney","input":{}}"""),
+        block("""{"type":"mcp_tool_result","tool_use_id":"t1","is_error":false,"content":[{"type":"text","text":"TOTAL_100"}]}"""),
+    )
+
+    @Test fun liveCallSavesSnapshotStampsReplyAndAudits() = runBlocking {
+        val audit = RecordingAudit()
+        val llm = FakeLlm({ reply("About 1 lakh.", content = netWorthCall) })
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots, audit = audit)
+            .run(emptyList(), "what's my net worth", settings).toList()
+
+        val done = events.last() as AgentEvent.Finished
+        assertEquals(listOf("INDmoney/networth_snapshot/live"), done.dataStamps.map { "${it.source}/${it.tool}/${if (it.cached) "cached" else "live"}" })
+        assertEquals("TOTAL_100", snapshots.all.first().single().content)
+        assertTrue(llm.requests[0].body["mcp_servers"] != null)
+
+        val tool = audit.events.single { it.category == AuditCategory.TOOL }
+        assertEquals(listOf("call", "ok", "networth_snapshot", "SENSITIVE"), listOf(tool.action, tool.outcome, tool.tool, tool.tier))
+        assertEquals("ok", audit.events.single { it.category == AuditCategory.REQUEST }.outcome)
+    }
+
+    @Test fun freshSnapshotIsReusedWithoutCallingTheConnector() = runBlocking {
+        snapshots.save(ToolRegistry.INDMONEY, "networth_snapshot", "TOTAL_100")
+        val audit = RecordingAudit()
+        val llm = FakeLlm({ reply("Still about 1 lakh.") })
+        // Signed-out connector: any attempt to use it would fail with ConnectorSignIn.
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector(token = null)), meter, snapshots = snapshots, audit = audit)
+            .run(emptyList(), "what's my net worth", settings).toList()
+
+        assertTrue((events.first() as AgentEvent.Routed).fromCache)
+        val body = llm.requests.single().body
+        assertTrue(body["mcp_servers"] == null && body["tools"] == null)
+        val content = body["messages"]!!.jsonArray.last().jsonObject["content"]!!.jsonArray
+        val data = content[0].jsonObject["text"]!!.jsonPrimitive.content
+        assertTrue(data, data.contains("<cached_data source=\"INDmoney\" tool=\"networth_snapshot\""))
+        assertTrue(data.contains("TOTAL_100"))
+        assertEquals("what's my net worth", content[1].jsonObject["text"]!!.jsonPrimitive.content)
+
+        val done = events.last() as AgentEvent.Finished
+        assertTrue(done.dataStamps.single().cached)
+        assertTrue(audit.events.any { it.action == "cache_hit" && it.tool == "networth_snapshot" })
+    }
+
+    @Test fun askingForLatestBypassesSavedData() = runBlocking {
+        snapshots.save(ToolRegistry.INDMONEY, "networth_snapshot", "old")
+        val llm = FakeLlm({ reply("Fresh numbers.", content = netWorthCall) })
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots)
+            .run(emptyList(), "refresh my net worth", settings).toList()
+        assertTrue(llm.requests.single().body["mcp_servers"] != null)
+        assertEquals("TOTAL_100", snapshots.all.first().single().content) // replaced with the live result
+    }
+
+    @Test fun reuseCanBeTurnedOff() = runBlocking {
+        snapshots.save(ToolRegistry.INDMONEY, "networth_snapshot", "old")
+        val llm = FakeLlm({ reply("Live.") })
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots)
+            .run(emptyList(), "net worth", settings.copy(snapshotMaxAgeMinutes = 0)).toList()
+        assertTrue(llm.requests.single().body["mcp_servers"] != null)
+    }
+
+    @Test fun argumentedOrFailedCallsAreNotSaved() = runBlocking {
+        val calls = listOf(
+            block("""{"type":"mcp_tool_use","id":"h","name":"networth_holdings","server_name":"indmoney","input":{"asset":"stocks"}}"""),
+            block("""{"type":"mcp_tool_result","tool_use_id":"h","is_error":false,"content":"stocks only"}"""),
+            block("""{"type":"mcp_tool_use","id":"n","name":"networth_snapshot","server_name":"indmoney","input":{}}"""),
+            block("""{"type":"mcp_tool_result","tool_use_id":"n","is_error":true,"content":"oops"}"""),
+        )
+        val llm = FakeLlm({ reply("Partial.", content = calls) })
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots)
+            .run(emptyList(), "net worth and holdings", settings).toList()
+        assertTrue(snapshots.all.first().isEmpty())
+    }
+
+    @Test fun refusalIsAudited() = runBlocking {
+        val audit = RecordingAudit()
+        val details = JsonObject(mapOf("category" to JsonPrimitive("cyber")))
+        AgentLoop(FakeLlm({ reply("", stop = "refusal", details = details) }), emptyMap(), meter, audit = audit)
+            .run(emptyList(), "hi", settings).toList()
+        assertEquals("refused", audit.events.single { it.category == AuditCategory.REQUEST }.outcome)
     }
 
     @Test fun mcpAuthHeuristic() {

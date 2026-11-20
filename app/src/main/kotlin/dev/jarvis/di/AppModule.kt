@@ -17,7 +17,13 @@ import dev.jarvis.connectors.Connector
 import dev.jarvis.connectors.McpProbe
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
 import dev.jarvis.connectors.oauth.OAuthClient
+import dev.jarvis.data.AuditLog
 import dev.jarvis.data.SettingsRepository
+import dev.jarvis.data.SnapshotStore
+import dev.jarvis.data.db.JarvisDatabase
+import dev.jarvis.memory.HistoryStore
+import androidx.room3.Room
+import androidx.sqlite.driver.AndroidSQLiteDriver
 import dev.jarvis.security.KeystoreSecretStore
 import dev.jarvis.security.SecretKey
 import dev.jarvis.security.SecretStore
@@ -36,6 +42,7 @@ private val Context.usageStore: DataStore<Preferences> by preferencesDataStore(n
 
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class SecretsStore
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class SettingsStore
+/** Phase 1 usage log; only read once to import into Room (see UsageMeter.importLegacy). */
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class UsageStore
 /** Process-lifetime scope for work that must not die with a screen (e.g. OAuth token exchange). */
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class AppScope
@@ -78,7 +85,23 @@ object AppModule {
     fun settings(@SettingsStore store: DataStore<Preferences>) = SettingsRepository(store)
 
     @Provides @Singleton
-    fun usageMeter(@UsageStore store: DataStore<Preferences>, json: Json) = UsageMeter(store, json)
+    fun database(@ApplicationContext c: Context): JarvisDatabase =
+        Room.databaseBuilder<JarvisDatabase>(c, JarvisDatabase.NAME)
+            .setDriver(AndroidSQLiteDriver())
+            .setQueryCoroutineContext(Dispatchers.IO)
+            .build()
+
+    @Provides @Singleton
+    fun usageMeter(db: JarvisDatabase) = UsageMeter(db.usage())
+
+    @Provides @Singleton
+    fun historyStore(db: JarvisDatabase) = HistoryStore(db.history())
+
+    @Provides @Singleton
+    fun snapshotStore(db: JarvisDatabase) = SnapshotStore(db.snapshots())
+
+    @Provides @Singleton
+    fun auditLog(db: JarvisDatabase) = AuditLog(db.audit())
 
     @Provides @Singleton
     fun llmClient(http: OkHttpClient, json: Json, secrets: SecretStore): LlmClient =
@@ -91,13 +114,19 @@ object AppModule {
     fun mcpProbe(http: OkHttpClient) = McpProbe(http)
 
     @Provides @Singleton
-    fun indMoney(secrets: SecretStore, oauth: OAuthClient, probe: McpProbe) = IndMoneyConnector(secrets, oauth, probe)
+    fun indMoney(secrets: SecretStore, oauth: OAuthClient, probe: McpProbe, audit: AuditLog) =
+        IndMoneyConnector(secrets, oauth, probe, audit = audit)
 
     @Provides @Singleton
     fun connectors(indMoney: IndMoneyConnector): Map<String, @JvmSuppressWildcards Connector> =
         mapOf(indMoney.id to indMoney)
 
     @Provides @Singleton
-    fun agentLoop(llm: LlmClient, connectors: Map<String, @JvmSuppressWildcards Connector>, usage: UsageMeter) =
-        AgentLoop(llm, connectors, usage)
+    fun agentLoop(
+        llm: LlmClient,
+        connectors: Map<String, @JvmSuppressWildcards Connector>,
+        usage: UsageMeter,
+        snapshots: SnapshotStore,
+        audit: AuditLog,
+    ) = AgentLoop(llm, connectors, usage, snapshots = snapshots, audit = audit)
 }

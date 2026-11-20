@@ -1,6 +1,6 @@
 # Security notes
 
-Phase 1 status. The full tier/PIN/biometric model (CLAUDE.md section 6) arrives in Phase 3.
+Phase 2 status. The full tier/PIN/biometric model (CLAUDE.md section 6) arrives in Phase 3.
 
 ## Secrets
 - Stored only in `KeystoreSecretStore`:
@@ -20,7 +20,8 @@ Phase 1 status. The full tier/PIN/biometric model (CLAUDE.md section 6) arrives 
 ## What leaves the phone
 - Anthropic receives:
   - your messages
-  - the text of earlier turns (up to 20)
+  - the text of earlier turns (the last 8, clipped)
+  - saved INDmoney data when a question is answered from it (marked as untrusted data)
   - the INDmoney access token, in `mcp_servers[].authorization_token`, so that Anthropic's MCP connector can call
     INDmoney on your behalf
   - tool results
@@ -39,7 +40,18 @@ The system prompt marks tool, email, web and document content as untrusted data.
 read-only, so nothing can act on injected instructions. Enforcement in code (confirmations for actions after
 untrusted content) arrives with Tier 3 actions.
 
+## Local data (Phase 2)
+- Chat history, saved connector data, the audit log and the usage log are in a Room database in the app's private
+  storage. Android's file-based encryption protects it while the phone is locked, other apps can't read it, and
+  it's excluded from backup and device transfer.
+- The database itself isn't encrypted with an app key (decision D14). Someone with the unlocked phone and USB
+  debugging could read it from a **debug** build. Release builds aren't debuggable. App-level database encryption
+  is an open question for Phase 3, alongside the PIN/biometric gate.
+- The audit log never stores message text, tool output, tokens, PINs or keys. Every field is capped at 80
+  characters so content can't slip in by mistake.
+- The user can delete one conversation or all history, and clear saved data, from the app. Each of these actions
+  is itself recorded in the audit log, without content.
+
 ## Known gaps (tracked in PROGRESS.md)
-- Finance data is Tier 2 by spec, but Phase 1 has no auth gate yet. Anyone holding the unlocked phone can ask
-  "what's my net worth?" until Phase 3.
-- No audit log yet (Phase 2).
+- Finance data is Tier 2 by spec, but there's no auth gate yet. Anyone holding the unlocked phone can ask
+  "what's my net worth?" or open History until Phase 3.

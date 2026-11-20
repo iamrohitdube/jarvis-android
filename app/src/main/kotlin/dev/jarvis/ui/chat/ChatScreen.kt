@@ -22,6 +22,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -34,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,7 +50,13 @@ import dev.jarvis.ui.common.FixAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(onOpenSettings: () -> Unit, onOpenUsage: () -> Unit, vm: ChatViewModel = hiltViewModel()) {
+fun ChatScreen(
+    onOpenSettings: () -> Unit,
+    onOpenUsage: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenAudit: () -> Unit,
+    vm: ChatViewModel = hiltViewModel(),
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val budget by vm.budget.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
@@ -62,8 +71,17 @@ fun ChatScreen(onOpenSettings: () -> Unit, onOpenUsage: () -> Unit, vm: ChatView
             TopAppBar(
                 title = { Text("JARVIS") },
                 actions = {
-                    TextButton(onClick = onOpenUsage) { Text("Usage") }
-                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                    TextButton(onClick = vm::newChat) { Text("New") }
+                    TextButton(onClick = onOpenHistory) { Text("History") }
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        TextButton(onClick = { menu = true }) { Text("⋮") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Usage") }, onClick = { menu = false; onOpenUsage() })
+                            DropdownMenuItem(text = { Text("Audit log") }, onClick = { menu = false; onOpenAudit() })
+                            DropdownMenuItem(text = { Text("Settings") }, onClick = { menu = false; onOpenSettings() })
+                        }
+                    }
                 },
             )
         },
@@ -158,6 +176,9 @@ private fun MessageBubble(msg: UiMessage, onFix: (FixAction) -> Unit) {
                 SelectionContainer { Text(msg.text, color = fg) }
             } else if (msg.streaming) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+            msg.dataLabel?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
             }
             msg.status?.let {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = fg.copy(alpha = 0.7f), modifier = Modifier.padding(top = 4.dp))

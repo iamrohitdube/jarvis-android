@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.room)
 }
 
 android {
@@ -17,8 +18,8 @@ android {
         applicationId = "dev.jarvis"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0-phase1"
+        versionCode = 2
+        versionName = "0.2.0-phase2"
     }
 
     buildTypes {
@@ -41,6 +42,11 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+}
+
+// Schema JSON is checked in so future versions can write tested migrations.
+room3 {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {
@@ -66,7 +72,12 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
+    implementation(libs.room.runtime)
+    ksp(libs.room.compiler)
+
     testImplementation(libs.junit)
+    // Host-JVM SQLite so Room DAOs run in plain unit tests (no device or Robolectric).
+    testImplementation(libs.sqlite.bundled.jvm)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
 }

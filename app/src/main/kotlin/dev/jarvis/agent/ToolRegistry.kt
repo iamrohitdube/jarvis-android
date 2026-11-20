@@ -23,6 +23,11 @@ data class ToolSpec(
     val groupDefault: Boolean = false,
     /** Always enabled alongside any other tool of the same connector (helpers like id lookup). */
     val helper: Boolean = false,
+    /**
+     * Whole-account read with no meaningful arguments (e.g. net worth): its result may be cached as a
+     * snapshot and reused for a short time. Live market data is never a snapshot tool.
+     */
+    val snapshot: Boolean = false,
 )
 
 /** The skill/tool catalog. The agent only ever sees the tools the router selects. */
@@ -32,14 +37,14 @@ object ToolRegistry {
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
             AuthTier.SENSITIVE, listOf("net worth", "networth", "portfolio", "wealth", "assets", "liabilit", "how much money", "how am i doing"),
-            groupDefault = true),
+            groupDefault = true, snapshot = true),
         indmoney("networth_allocation_breakdown", "Allocation detail for one asset type",
             AuthTier.SENSITIVE, listOf("allocation", "breakdown", "split", "asset class", "exposure")),
         indmoney("networth_holdings", "Positions with units, value, P&L, XIRR",
-            AuthTier.SENSITIVE, listOf("holding", "position", "p&l", "pnl", "profit", "loss", "xirr", "my stocks", "my funds", "my shares")),
-        indmoney("indian_stocks_sips", "Active stock SIPs", AuthTier.SENSITIVE, listOf("sip", "stock sip")),
-        indmoney("mf_sips", "Active mutual fund SIPs", AuthTier.SENSITIVE, listOf("sip", "mutual fund sip", "mf sip")),
-        indmoney("user_watchlist", "Instruments on the user's watchlist", AuthTier.PERSONAL, listOf("watchlist")),
+            AuthTier.SENSITIVE, listOf("holding", "position", "p&l", "pnl", "profit", "loss", "xirr", "my stocks", "my funds", "my shares"), snapshot = true),
+        indmoney("indian_stocks_sips", "Active stock SIPs", AuthTier.SENSITIVE, listOf("sip", "stock sip"), snapshot = true),
+        indmoney("mf_sips", "Active mutual fund SIPs", AuthTier.SENSITIVE, listOf("sip", "mutual fund sip", "mf sip"), snapshot = true),
+        indmoney("user_watchlist", "Instruments on the user's watchlist", AuthTier.PERSONAL, listOf("watchlist"), snapshot = true),
         indmoney("lookup_ind_keys", "Resolve a stock/index/fund name to an identifier", AuthTier.OPEN, emptyList(), helper = true),
         indmoney("get_indian_stocks_details", "Live Indian stock price, day stats, 52-week range",
             AuthTier.OPEN, listOf("price", "stock", "share price", "nifty", "sensex", "trading at", "market cap")),
@@ -60,10 +65,10 @@ object ToolRegistry {
 
     private fun indmoney(
         name: String, description: String, tier: AuthTier, keywords: List<String>,
-        groupDefault: Boolean = false, helper: Boolean = false,
+        groupDefault: Boolean = false, helper: Boolean = false, snapshot: Boolean = false,
     ) = ToolSpec(
         name = name, description = description, group = ToolGroup.FINANCE, risk = RiskLevel.READ, tier = tier,
         confirmationRequired = false, connectorId = INDMONEY, keywords = keywords,
-        groupDefault = groupDefault, helper = helper,
+        groupDefault = groupDefault, helper = helper, snapshot = snapshot,
     )
 }

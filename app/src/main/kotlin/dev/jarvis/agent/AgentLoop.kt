@@ -16,6 +16,11 @@ import dev.jarvis.claude.UsageSummary
 import dev.jarvis.claude.str
 import dev.jarvis.connectors.Connector
 import dev.jarvis.data.AppSettings
+import dev.jarvis.data.AuditCategory
+import dev.jarvis.data.AuditEvent
+import dev.jarvis.data.AuditSink
+import dev.jarvis.data.SnapshotStore
+import dev.jarvis.data.db.SnapshotEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -40,16 +45,25 @@ sealed interface AgentError {
 }
 
 sealed interface AgentEvent {
-    data class Routed(val model: String, val toolNames: List<String>) : AgentEvent
+    data class Routed(val model: String, val toolNames: List<String>, val fromCache: Boolean = false) : AgentEvent
     data class TextDelta(val text: String) : AgentEvent
     data class ToolActivity(val toolName: String) : AgentEvent
-    data class Finished(val text: String, val usage: Usage, val costUsd: Double?, val truncated: Boolean) : AgentEvent
+    data class Finished(
+        val text: String,
+        val usage: Usage,
+        val costUsd: Double?,
+        val truncated: Boolean,
+        val model: String? = null,
+        /** Connector data the reply used, with fetch times, for the "last updated" label. */
+        val dataStamps: List<DataStamp> = emptyList(),
+    ) : AgentEvent
     data class Failed(val error: AgentError, val partialText: String) : AgentEvent
 }
 
 /**
- * Runs one user turn: route -> attach connectors -> stream -> resume pause_turn -> log usage.
- * Policy decisions (which tools, which model) are made in code, never delegated to the prompt.
+ * Runs one user turn: budget check -> route -> reuse fresh snapshots or attach connectors -> stream
+ * -> resume pause_turn -> save snapshots -> log usage and audit. Policy decisions (which tools, which
+ * model, whether cached data is reused) are made in code, never delegated to the prompt.
  */
 class AgentLoop(
     private val llm: LlmClient,
@@ -57,32 +71,48 @@ class AgentLoop(
     private val usageMeter: UsageMeter,
     private val clock: () -> Long = System::currentTimeMillis,
     private val zone: ZoneId = ZoneId.systemDefault(),
+    private val snapshots: SnapshotStore? = null,
+    private val audit: AuditSink = AuditSink.NONE,
 ) {
     fun run(history: List<ChatTurn>, userText: String, settings: AppSettings): Flow<AgentEvent> = flow {
         // Hard stop before spending anything once the local monthly estimate reaches the budget.
         if (settings.stopAtBudget && settings.monthlyBudgetUsd > 0) {
             val summary = UsageSummary.of(usageMeter.entries.first(), settings.monthlyBudgetUsd, Instant.ofEpochMilli(clock()), zone)
             if (summary.budgetFraction >= 1.0) {
+                auditRequest("budget_stop", null, null)
                 emit(AgentEvent.Failed(AgentError.BudgetReached(settings.monthlyBudgetUsd), ""))
                 return@flow
             }
         }
-        val route = ToolRouter.route(userText, settings)
-        emit(AgentEvent.Routed(route.model, route.tools.map { it.name }))
+        var route = ToolRouter.route(userText, settings)
+
+        // Reuse fresh snapshots instead of calling the connector (saves the MCP round-trip tokens).
+        var cached: List<SnapshotEntity> = emptyList()
+        if (snapshots != null && route.tools.isNotEmpty() && !ToolRouter.wantsFresh(userText)) {
+            snapshots.freshFor(route.tools, settings.snapshotMaxAgeMinutes * 60_000L)?.let { fresh ->
+                cached = fresh
+                route = route.copy(groups = emptySet(), tools = emptyList())
+            }
+        }
+        emit(AgentEvent.Routed(route.model, route.tools.map { it.name }, fromCache = cached.isNotEmpty()))
 
         val servers = mutableListOf<McpServerConfig>()
         for (cid in route.connectorIds) {
             val connector = connectors[cid] ?: continue
             val server = connector.mcpServer()
             if (server == null) {
+                auditRequest("connector_signin_needed", route, cid)
                 emit(AgentEvent.Failed(AgentError.ConnectorSignIn(cid, connector.displayName), ""))
                 return@flow
             }
             servers += server
         }
 
+        val now = clock()
+        val cachedData = cached.map { CachedData(displayName(it.connectorId), it.tool, ageLabel(now - it.fetchedAt), it.content) }
         val trimmedHistory = trimHistory(history)
         val text = StringBuilder()
+        val allContent = mutableListOf<JsonObject>()
         var usage = Usage()
         var model = route.model
         var ttft: Long? = null
@@ -90,11 +120,12 @@ class AgentLoop(
         var paused: List<JsonObject>? = null
         var continuations = 0
         var authRetried = false
+        var outcome = "cancelled"
         val started = clock()
 
         try {
             while (true) {
-                val request = PromptBuilder.build(route, trimmedHistory, userText, servers, settings.serverFallback, paused)
+                val request = PromptBuilder.build(route, trimmedHistory, userText, servers, settings.serverFallback, paused, cachedData)
                 var message: AssembledMessage? = null
                 try {
                     llm.stream(request).collect { ev ->
@@ -112,6 +143,7 @@ class AgentLoop(
                         authRetried = true
                         if (refreshServers(route, servers)) continue
                         val c = route.connectorIds.firstNotNullOfOrNull { connectors[it] }
+                        outcome = "connector_signin_needed"
                         emitFailure(AgentError.ConnectorSignIn(c?.id ?: "", c?.displayName ?: "Connector"), text)
                         return@flow
                     }
@@ -121,45 +153,103 @@ class AgentLoop(
                 val msg = message ?: throw StreamProtocolException("No message received")
                 usage += msg.usage
                 msg.model?.let { model = it }
+                allContent += msg.content
                 if (msg.stopReason == "pause_turn" && continuations < MAX_CONTINUATIONS) {
                     continuations++
                     paused = paused.orEmpty() + msg.content
                     continue
                 }
                 when (msg.stopReason) {
-                    "refusal" -> emitFailure(AgentError.Refused(msg.stopDetails?.str("category")), text)
-                    else -> emit(
-                        AgentEvent.Finished(
-                            text = text.toString().ifBlank { "(No reply.)" },
-                            usage = usage,
-                            costUsd = Pricing.cost(model, usage),
-                            truncated = msg.stopReason == "max_tokens",
+                    "refusal" -> {
+                        outcome = "refused"
+                        emitFailure(AgentError.Refused(msg.stopDetails?.str("category")), text)
+                    }
+                    else -> {
+                        val stamps = recordToolCalls(ToolCalls.extract(allContent)) + cached.map {
+                            DataStamp(displayName(it.connectorId), it.tool, it.fetchedAt, cached = true)
+                        }
+                        cached.forEach {
+                            audit.record(AuditEvent(AuditCategory.TOOL, "cache_hit", "ok", tool = it.tool, tier = tierOf(it.tool), detail = "cached"))
+                        }
+                        val truncated = msg.stopReason == "max_tokens"
+                        outcome = if (truncated) "truncated" else "ok"
+                        emit(
+                            AgentEvent.Finished(
+                                text = text.toString().ifBlank { "(No reply.)" },
+                                usage = usage,
+                                costUsd = Pricing.cost(model, usage),
+                                truncated = truncated,
+                                model = model,
+                                dataStamps = stamps,
+                            )
                         )
-                    )
+                    }
                 }
                 break
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: LlmException) {
+            outcome = "error:" + e.javaClass.simpleName
             emitFailure(mapError(e), text)
         } catch (e: StreamErrorEvent) {
+            outcome = "error:" + e.errorType
             emitFailure(if (e.errorType == "overloaded_error") AgentError.Overloaded else AgentError.Other(e.message ?: e.errorType), text)
         } catch (e: StreamProtocolException) {
+            outcome = "error:stream"
             emitFailure(AgentError.Network(e.message ?: "Stream interrupted"), text)
         } finally {
-            if (usage != Usage()) {
-                val entry = UsageEntry(
-                    timestampMs = started, model = model, mode = route.mode.id,
-                    inputTokens = usage.inputTokens, outputTokens = usage.outputTokens,
-                    cacheWriteTokens = usage.cacheCreationInputTokens, cacheReadTokens = usage.cacheReadInputTokens,
-                    costUsd = Pricing.cost(model, usage), latencyMs = clock() - started,
-                    timeToFirstTokenMs = ttft, toolsUsed = tools,
-                )
-                withContext(NonCancellable) { usageMeter.record(entry) }
+            withContext(NonCancellable) {
+                if (usage != Usage()) {
+                    usageMeter.record(
+                        UsageEntry(
+                            timestampMs = started, model = model, mode = route.mode.id,
+                            inputTokens = usage.inputTokens, outputTokens = usage.outputTokens,
+                            cacheWriteTokens = usage.cacheCreationInputTokens, cacheReadTokens = usage.cacheReadInputTokens,
+                            costUsd = Pricing.cost(model, usage), latencyMs = clock() - started,
+                            timeToFirstTokenMs = ttft, toolsUsed = tools,
+                        )
+                    )
+                }
+                auditRequest(outcome, route, null, model)
             }
         }
     }
+
+    /** Audits each tool call, saves whole-account results as snapshots, and returns live data stamps. */
+    private suspend fun recordToolCalls(calls: List<ToolCall>): List<DataStamp> {
+        val stamps = LinkedHashMap<String, DataStamp>()
+        val now = clock()
+        for (call in calls) {
+            val spec = ToolRegistry.byName(call.name)
+            audit.record(
+                AuditEvent(
+                    AuditCategory.TOOL, "call", if (call.isError) "error" else "ok",
+                    tool = call.name, tier = spec?.tier?.name, detail = "live",
+                )
+            )
+            if (call.isError || spec == null || spec.helper) continue
+            val connectorId = spec.connectorId ?: continue
+            if (spec.snapshot && call.hasNoArguments && !call.resultText.isNullOrBlank()) {
+                snapshots?.save(connectorId, call.name, call.resultText, now)
+            }
+            stamps[call.name] = DataStamp(displayName(connectorId), call.name, now, cached = false)
+        }
+        return stamps.values.toList()
+    }
+
+    private suspend fun auditRequest(outcome: String, route: RouteDecision?, connectorId: String?, model: String? = route?.model) {
+        audit.record(
+            AuditEvent(
+                AuditCategory.REQUEST, "message", outcome,
+                tool = connectorId, detail = listOfNotNull(model?.removePrefix("claude-"), route?.mode?.id).joinToString(" · ").ifEmpty { null },
+            )
+        )
+    }
+
+    private fun displayName(connectorId: String) = connectors[connectorId]?.displayName ?: connectorId
+
+    private fun tierOf(tool: String) = ToolRegistry.byName(tool)?.tier?.name
 
     private suspend fun FlowCollector<AgentEvent>.emitFailure(error: AgentError, text: StringBuilder) =
         emit(AgentEvent.Failed(error, text.toString()))
@@ -189,6 +279,16 @@ class AgentLoop(
             history.takeLast(MAX_HISTORY_TURNS)
                 .dropWhile { it.role != ChatTurn.Role.USER }
                 .map { if (it.text.length > MAX_TURN_CHARS) it.copy(text = it.text.take(MAX_TURN_CHARS) + " […]") else it }
+
+        /** "just now", "4 min ago", "2 h ago". */
+        fun ageLabel(ageMs: Long): String {
+            val min = ageMs.coerceAtLeast(0) / 60_000
+            return when {
+                min < 1 -> "just now"
+                min < 60 -> "$min min ago"
+                else -> "${min / 60} h ago"
+            }
+        }
 
         /** Heuristic: the API reports MCP server auth failures as 400s mentioning the server/auth. */
         fun looksLikeMcpAuthError(message: String): Boolean {
