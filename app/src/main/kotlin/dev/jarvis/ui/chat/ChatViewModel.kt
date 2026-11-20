@@ -18,7 +18,9 @@ import dev.jarvis.claude.BudgetLevel
 import dev.jarvis.claude.UsageMeter
 import dev.jarvis.claude.UsageSummary
 import dev.jarvis.data.SettingsRepository
+import dev.jarvis.data.db.ConversationSummary
 import dev.jarvis.data.db.MessageEntity
+import kotlinx.coroutines.flow.map
 import dev.jarvis.memory.HistoryStore
 import dev.jarvis.ui.common.UiError
 import dev.jarvis.ui.common.dataLabel
@@ -90,8 +92,9 @@ class ChatViewModel @Inject constructor(
 
     private val persisted = current.id.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else history.messages(id) }
 
-    val state: StateFlow<ChatState> = combine(persisted, live, busy, lastError, unlocked) { rows, liveReply, isBusy, err, open ->
-        val msgs = rows.map { it.toUi(err, open) }.toMutableList()
+    val state: StateFlow<ChatState> = combine(persisted, live, busy, lastError, combine(unlocked, sessions.revealed) { a, b -> a to b }) {
+            rows, liveReply, isBusy, err, (open, revealed) ->
+        val msgs = rows.map { it.toUi(err, open || it.id in revealed) }.toMutableList()
         liveReply?.let { msgs += UiMessage(LIVE_ID, fromUser = false, text = it.text, streaming = true, status = it.status) }
         ChatState(msgs, isBusy)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatState())
@@ -99,6 +102,15 @@ class ChatViewModel @Inject constructor(
     val budget: StateFlow<BudgetLevel> = combine(usageMeter.entries, settings.settings) { entries, s ->
         UsageSummary.of(entries, s.monthlyBudgetUsd, Instant.now(), ZoneId.systemDefault()).budgetLevel
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BudgetLevel.NONE)
+
+    init {
+        // Whatever is visible while unlocked stays revealed afterwards (until an explicit "lock").
+        viewModelScope.launch {
+            combine(persisted, unlocked) { a, b -> a to b }.collect { (rows, open) ->
+                if (open) sessions.reveal(rows.filter { it.sensitive }.map { it.id })
+            }
+        }
+    }
 
     fun send(raw: String) {
         val text = raw.trim()
@@ -169,6 +181,24 @@ class ChatViewModel @Inject constructor(
     /** Tap on a hidden sensitive reply: PIN or fingerprint, then it's visible for the session. */
     fun unlock() = viewModelScope.launch { auth.unlock(AuthTier.SENSITIVE) }
 
+    /** Recent conversations for the navigation drawer. */
+    val recent: StateFlow<List<ConversationSummary>> = history.conversations()
+        .map { it.take(RECENT_IN_DRAWER) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val currentId: StateFlow<Long?> = current.id
+
+    /** "Haiku 5.5" style label for the top bar. */
+    val modelLabel: StateFlow<String> = settings.settings
+        .map { prettyModel(it.chatModel) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    fun open(id: Long) {
+        if (busy.value) stop()
+        lastError.value = null
+        current.open(id)
+    }
+
     fun newChat() {
         if (busy.value) stop()
         lastError.value = null
@@ -209,6 +239,12 @@ class ChatViewModel @Inject constructor(
 
     private companion object {
         const val LIVE_ID = -1L
+        const val RECENT_IN_DRAWER = 12
+        fun prettyModel(id: String): String = id.removePrefix("claude-").split("-").let { parts ->
+            val name = parts.firstOrNull()?.replaceFirstChar { it.uppercase() } ?: id
+            val version = parts.drop(1).joinToString(".")
+            if (version.isEmpty()) name else "$name $version"
+        }
         private val LOCK_COMMANDS = setOf("lock", "lock it", "lock now", "lock up", "lock jarvis")
         fun isLockCommand(text: String) = text.lowercase().trim().trimEnd('.', '!') in LOCK_COMMANDS
         fun ticker(periodMs: Long = 5_000) = flow { while (true) { emit(Unit); delay(periodMs) } }

@@ -152,9 +152,13 @@ class AuthCoordinator(
         }
     }
 
-    /** Ends all sessions ("lock", screen off, Settings → Lock now) and records why. */
+    /**
+     * Ends all sessions and records why. An explicit lock ("lock", Lock now) also re-hides sensitive
+     * messages the user had already revealed; screen-off doesn't.
+     */
     suspend fun lock(reason: String) {
         sessions.lock()
+        if (reason != SCREEN_OFF) sessions.forgetReveals()
         audit(AuditCategory.AUTH, "session_lock", "ok", detail = reason)
     }
 
@@ -345,5 +349,6 @@ class AuthCoordinator(
         const val CHOICE_TIMEOUT_MS = 6_000L
         const val PROMPT_TIMEOUT_MS = 120_000L
         const val PIN_LOCKED_MESSAGE = "PIN is locked, use fingerprint."
+        const val SCREEN_OFF = "screen_off"
     }
 }

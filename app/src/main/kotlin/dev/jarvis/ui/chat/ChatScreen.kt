@@ -1,138 +1,198 @@
 package dev.jarvis.ui.chat
 
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jarvis.claude.BudgetLevel
 import dev.jarvis.ui.common.FixAction
+import dev.jarvis.ui.components.BrandGlow
+import dev.jarvis.ui.components.ChipTone
+import dev.jarvis.ui.components.JarvisOrb
+import dev.jarvis.ui.components.OrbAvatar
+import dev.jarvis.ui.components.StatusChip
+import dev.jarvis.ui.components.TypingDots
+import dev.jarvis.ui.theme.Brand
+import dev.jarvis.ui.theme.withBrandGradient
+import kotlinx.coroutines.launch
+import java.time.LocalTime
+import dev.jarvis.ui.icons.AppIcons
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val Suggestions = listOf(
+    "What's my net worth?",
+    "How are my SIPs doing?",
+    "Best large-cap funds?",
+    "Explain SIP vs lump sum",
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenUsage: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenAudit: () -> Unit,
+    onOpenSecurity: () -> Unit,
     vm: ChatViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val budget by vm.budget.collectAsStateWithLifecycle()
+    val recent by vm.recent.collectAsStateWithLifecycle()
+    val currentId by vm.currentId.collectAsStateWithLifecycle()
+    val model by vm.modelLabel.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    fun closeDrawerThen(action: () -> Unit) { scope.launch { drawer.close() }; action() }
+    val send = { if (input.isNotBlank()) { vm.send(input); input = "" } }
 
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text?.length) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("JARVIS") },
-                actions = {
-                    TextButton(onClick = vm::newChat) { Text("New") }
-                    TextButton(onClick = onOpenHistory) { Text("History") }
-                    var menu by remember { mutableStateOf(false) }
-                    Box {
-                        TextButton(onClick = { menu = true }) { Text("⋮") }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text("Usage") }, onClick = { menu = false; onOpenUsage() })
-                            DropdownMenuItem(text = { Text("Audit log") }, onClick = { menu = false; onOpenAudit() })
-                            DropdownMenuItem(text = { Text("Settings") }, onClick = { menu = false; onOpenSettings() })
+    ModalNavigationDrawer(
+        drawerState = drawer,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+                drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ) {
+                DrawerContent(
+                    recent = recent.map { it.id to it.title }, currentId = currentId,
+                    onNewChat = { closeDrawerThen(vm::newChat) },
+                    onOpen = { id -> closeDrawerThen { vm.open(id) } },
+                    onHistory = { closeDrawerThen(onOpenHistory) },
+                    onUsage = { closeDrawerThen(onOpenUsage) },
+                    onAudit = { closeDrawerThen(onOpenAudit) },
+                    onSecurity = { closeDrawerThen(onOpenSecurity) },
+                    onSettings = { closeDrawerThen(onOpenSettings) },
+                )
+            }
+        },
+    ) {
+        Scaffold(
+            topBar = {
+                CenterAlignedTopAppBar(
+                    navigationIcon = { IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(AppIcons.Menu, "Menu") } },
+                    title = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("JARVIS", style = MaterialTheme.typography.titleLarge.withBrandGradient())
+                            if (model.isNotEmpty()) Text(model, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    actions = { IconButton(onClick = vm::newChat) { Icon(AppIcons.Add, "New chat") } },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+                )
+            },
+        ) { padding ->
+            Box(Modifier.fillMaxSize()) {
+                BrandGlow(Modifier.size(420.dp).align(Alignment.TopCenter).offset(y = (-160).dp))
+                Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+                    AnimatedVisibility(budget == BudgetLevel.WARNING || budget == BudgetLevel.EXCEEDED) {
+                        BudgetBanner(exceeded = budget == BudgetLevel.EXCEEDED, onClick = onOpenUsage)
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        if (state.messages.isEmpty()) {
+                            EmptyState(onSuggestion = { vm.send(it) })
+                        } else {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                items(state.messages, key = { it.id }) { msg ->
+                                    Box(Modifier.animateItem()) {
+                                        if (msg.fromUser) UserBubble(msg.text)
+                                        else AssistantMessage(
+                                            msg,
+                                            onUnlock = vm::unlock,
+                                            onFix = { action ->
+                                                when (action) {
+                                                    FixAction.OPEN_SETTINGS -> onOpenSettings()
+                                                    FixAction.RETRY -> vm.retry()
+                                                    FixAction.NONE -> Unit
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            when (budget) {
-                BudgetLevel.WARNING -> Banner("Over 80% of this month's budget.", onOpenUsage)
-                BudgetLevel.EXCEEDED -> Banner("Monthly budget exceeded.", onOpenUsage)
-                else -> Unit
-            }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (state.messages.isEmpty()) {
-                    item { EmptyHint() }
-                }
-                items(state.messages, key = { it.id }) { msg ->
-                    MessageBubble(
-                        msg,
-                        onUnlock = vm::unlock,
-                        onFix = { action ->
-                            when (action) {
-                                FixAction.OPEN_SETTINGS -> onOpenSettings()
-                                FixAction.RETRY -> vm.retry()
-                                FixAction.NONE -> Unit
-                            }
-                        },
+                    Composer(
+                        value = input, onValueChange = { input = it },
+                        busy = state.busy, onSend = send, onStop = vm::stop,
                     )
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth().padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Ask anything… e.g. \"what's my net worth?\"") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { vm.send(input); input = "" }),
-                    maxLines = 4,
-                )
-                Spacer(Modifier.size(8.dp))
-                if (state.busy) {
-                    OutlinedButton(onClick = vm::stop) { Text("Stop") }
-                } else {
-                    Button(onClick = { vm.send(input); input = "" }, enabled = input.isNotBlank()) { Text("Send") }
                 }
             }
         }
@@ -140,60 +200,220 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Banner(text: String, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun DrawerContent(
+    recent: List<Pair<Long, String>>,
+    currentId: Long?,
+    onNewChat: () -> Unit,
+    onOpen: (Long) -> Unit,
+    onHistory: () -> Unit,
+    onUsage: () -> Unit,
+    onAudit: () -> Unit,
+    onSecurity: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 16.dp)) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            JarvisOrb(44.dp)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("JARVIS", style = MaterialTheme.typography.titleLarge.withBrandGradient())
+                Text("Your personal assistant", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        FilledTonalButton(onClick = onNewChat, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            Icon(AppIcons.Add, null); Spacer(Modifier.width(8.dp)); Text("New chat")
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Recent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, bottom = 4.dp))
+        Column(Modifier.weight(1f)) {
+            if (recent.isEmpty()) {
+                Text("No chats yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+            }
+            LazyColumn {
+                items(recent, key = { it.first }) { (id, title) ->
+                    NavigationDrawerItem(
+                        label = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        icon = { Icon(AppIcons.ChatBubbleOutline, null, modifier = Modifier.size(20.dp)) },
+                        selected = id == currentId,
+                        onClick = { onOpen(id) },
+                    )
+                }
+                item {
+                    NavigationDrawerItem(
+                        label = { Text("All history") }, icon = { Icon(AppIcons.History, null) },
+                        selected = false, onClick = onHistory,
+                    )
+                }
+            }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        DrawerLink("Usage", AppIcons.BarChart, onUsage)
+        DrawerLink("Audit log", AppIcons.Policy, onAudit)
+        DrawerLink("Security", AppIcons.Shield, onSecurity)
+        DrawerLink("Settings", AppIcons.Settings, onSettings)
+    }
+}
+
+@Composable
+private fun DrawerLink(label: String, icon: ImageVector, onClick: () -> Unit) =
+    NavigationDrawerItem(label = { Text(label) }, icon = { Icon(icon, null) }, selected = false, onClick = onClick)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EmptyState(onSuggestion: (String) -> Unit) {
+    var shown by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val greeting = when (LocalTime.now().hour) {
+        in 5..11 -> "Good morning."
+        in 12..16 -> "Good afternoon."
+        else -> "Good evening."
+    }
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Text(text, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = onClick) { Text("View") }
+        AnimatedVisibility(shown, enter = fadeIn() + scaleIn(initialScale = 0.7f)) { JarvisOrb(150.dp) }
+        Spacer(Modifier.height(24.dp))
+        AnimatedVisibility(shown, enter = fadeIn() + slideInVertically { it / 2 }) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(greeting, style = MaterialTheme.typography.headlineMedium)
+                Text("How can I help?", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(24.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Suggestions.forEach { s ->
+                        SuggestionChip(onClick = { onSuggestion(s) }, label = { Text(s) }, shape = CircleShape)
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun EmptyHint() {
-    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("At your service.", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Try \"what's my net worth?\" once INDmoney is connected.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun MessageBubble(msg: UiMessage, onFix: (FixAction) -> Unit, onUnlock: () -> Unit) {
-    val align = if (msg.fromUser) Alignment.CenterEnd else Alignment.CenterStart
-    val bg = if (msg.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-    val fg = if (msg.fromUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Box(Modifier.fillMaxWidth(), contentAlignment = align) {
-        Column(
-            Modifier.widthIn(max = 520.dp)
-                .background(bg, RoundedCornerShape(14.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+private fun UserBubble(text: String) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        Surface(
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.widthIn(max = 320.dp),
         ) {
-            if (msg.hidden) {
-                Text("Sensitive. Hidden until you unlock.", color = fg, style = MaterialTheme.typography.bodyMedium)
-                TextButton(onClick = onUnlock) { Text("Unlock") }
-            } else if (msg.text.isNotEmpty()) {
-                SelectionContainer { Text(msg.text, color = fg) }
-            } else if (msg.streaming) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            SelectionContainer {
+                Text(text, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
             }
-            if (msg.screenOnly && !msg.hidden) {
-                Text("Shown on screen only", style = MaterialTheme.typography.labelSmall, color = fg.copy(alpha = 0.7f), modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AssistantMessage(msg: UiMessage, onUnlock: () -> Unit, onFix: (FixAction) -> Unit) {
+    Row(Modifier.fillMaxWidth()) {
+        OrbAvatar(thinking = msg.streaming, modifier = Modifier.padding(top = 2.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                msg.hidden -> HiddenCard(onUnlock)
+                msg.text.isNotEmpty() -> SelectionContainer {
+                    Text(msg.text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                }
+                msg.streaming -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(28.dp)) { TypingDots() }
             }
-            msg.dataLabel?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+            if (msg.dataLabel != null || (msg.screenOnly && !msg.hidden)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    msg.dataLabel?.let { StatusChip(it, ChipTone.BRAND, AppIcons.Update) }
+                    if (msg.screenOnly && !msg.hidden) StatusChip("Shown on screen only", ChipTone.NEUTRAL, AppIcons.VisibilityOff)
+                }
             }
             msg.status?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = fg.copy(alpha = 0.7f), modifier = Modifier.padding(top = 4.dp))
+                AnimatedContent(it, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "status") { s ->
+                    Text(s, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             msg.error?.let { err ->
-                Text(err.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
-                if (err.fix != FixAction.NONE && err.fixLabel != null) {
-                    TextButton(onClick = { onFix(err.fix) }) { Text(err.fixLabel) }
+                Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.errorContainer) {
+                    Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(AppIcons.ErrorOutline, null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(err.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                        if (err.fix != FixAction.NONE && err.fixLabel != null) {
+                            TextButton(onClick = { onFix(err.fix) }) { Text(err.fixLabel, color = MaterialTheme.colorScheme.onErrorContainer) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HiddenCard(onUnlock: () -> Unit) {
+    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(AppIcons.Lock, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Sensitive", style = MaterialTheme.typography.titleSmall)
+                Text("Hidden until you unlock", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            FilledTonalButton(onClick = onUnlock) { Text("Unlock") }
+        }
+    }
+}
+
+@Composable
+private fun BudgetBanner(exceeded: Boolean, onClick: () -> Unit) {
+    val tint = if (exceeded) MaterialTheme.colorScheme.error else Brand.Warning
+    Surface(
+        shape = MaterialTheme.shapes.medium, color = tint.copy(alpha = 0.14f),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(AppIcons.Savings, null, tint = tint, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (exceeded) "Monthly budget used up" else "Over 80% of this month's budget", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = onClick) { Text("View") }
+        }
+    }
+}
+
+@Composable
+private fun Composer(value: String, onValueChange: (String) -> Unit, busy: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Row(Modifier.padding(start = 4.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
+            TextField(
+                value = value, onValueChange = onValueChange,
+                placeholder = { Text("Ask JARVIS…") },
+                modifier = Modifier.weight(1f),
+                maxLines = 5,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                ),
+            )
+            AnimatedContent(
+                targetState = busy,
+                transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) },
+                label = "sendStop",
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) { isBusy ->
+                if (isBusy) {
+                    FilledIconButton(
+                        onClick = onStop, modifier = Modifier.size(48.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest, contentColor = MaterialTheme.colorScheme.onSurface),
+                    ) { Icon(AppIcons.Stop, "Stop") }
+                } else {
+                    FilledIconButton(
+                        onClick = onSend, enabled = value.isNotBlank(), modifier = Modifier.size(48.dp),
+                    ) { Icon(AppIcons.Send, "Send") }
                 }
             }
         }

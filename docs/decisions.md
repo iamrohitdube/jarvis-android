@@ -174,3 +174,46 @@ CLAUDE.md's level descriptions are short, so this is the exact interpretation, e
   database from the exported schema and checks that history survives the upgrade.
 - Deferred to the voice phases: spoken PIN with voice match, and challenge digits. Typed PINs make challenge
   digits unnecessary for now.
+
+## D19. Design system and polish pass (2026-11-21, between Phases 3 and 4)
+- **Brand theme (`ui/theme/Theme.kt`):** dark-first. Deep navy (#0A0E17) with an electric blue / cyan / violet
+  accent gradient, plus custom light and dark Material 3 colour schemes. Wallpaper-based dynamic colour is off so
+  the app always looks like JARVIS. Corners are generous (8/12/16/24/28 dp), and the type scale is tuned with
+  semibold titles.
+- **Identity:** the JARVIS orb, a glowing core with rotating gradient rings.
+  - Adaptive launcher icon (vector, with a monochrome layer for Android 13+ themed icons).
+  - Animated launch screen (androidx core-splashscreen 1.2.0): the ring sweeps and the core grows in, and on exit
+    the orb scales and fades into the app.
+  - A Compose `JarvisOrb` that breathes when idle and spins faster while thinking. It's used on the empty chat,
+    as JARVIS's avatar, in the drawer and in onboarding.
+- **Chat**, modelled on production assistant apps:
+  - navigation drawer (new chat, recent chats, history, usage, audit, security, settings)
+  - user bubbles; assistant replies as plain text beside the orb avatar
+  - status chips ("updated 10:42", "Shown on screen only"), typing dots while waiting
+  - pill composer whose Send button morphs into Stop
+  - greeting and suggestion chips on the empty screen
+  - items animate in
+- **Settings and other screens:**
+  - grouped cards with icon tiles and status chips (Saved, Connected, Expired, Locked)
+  - Save buttons confirm with "Saved ✓" instead of needing a dialog
+  - segmented control for the tool-policy level
+  - Usage gets a hero card with a gradient budget bar and stat tiles
+  - Audit gets category icons and outcome chips
+  - History gets a pill search bar and empty states
+- **Motion:** slide/fade screen transitions, animated visibility for status lines, a countdown ring around the
+  fingerprint icon in the "PIN or fingerprint?" dialog.
+- **Icons:** first built with `material-icons-extended` 1.7.8. That made the debug APK ~76 MB and debug builds
+  ~20 min, because it ships thousands of icons and only R8 (release) strips them. It was replaced by
+  `ui/icons/AppIcons.kt`: only the 40 icons the app uses, generated from Google's Material Icons "Round" SVGs (npm
+  `@material-design-icons/svg` 0.14.15, Apache-2.0, attribution in the file header). They have the same names as
+  `Icons.Rounded.*` and look identical.
+- **Fixes:**
+  - The PIN dialog now shows "Saving…" while the deliberately slow hash runs, keeps the input on errors, and
+    closes itself on success (before, it looked stuck and had to be closed by hand).
+  - Scrolling screens (Settings, Security, Onboarding, Chat) pad for the keyboard, so a focused field moves up
+    above the keyboard instead of hiding behind it.
+  - Clearing the usage log now asks first.
+- **Reveal behaviour (updates D18):** once a saved sensitive reply has been seen unlocked, it stays visible for
+  the rest of the app process, even after the 2-minute session expires or the screen turns off. Only an explicit
+  "lock" / Lock now hides them again. Reveals are in memory only, so a restart hides them. New sensitive questions
+  still need PIN or fingerprint as before.

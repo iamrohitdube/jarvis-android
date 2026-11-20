@@ -1,6 +1,13 @@
 package dev.jarvis.ui
 
 import android.os.Bundle
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.runtime.LaunchedEffect
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.biometric.AuthenticationResult
 import androidx.biometric.AuthenticationResultCallback
 import androidx.biometric.registerForAuthenticationResult
@@ -68,8 +75,17 @@ class MainActivity : ComponentActivity() {
         }
     )
     private var launchedPromptId = -1L
+    /** Keeps the launch screen up until settings have loaded, so the first frame is the real UI. */
+    @Volatile private var ready = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
+        splash.setKeepOnScreenCondition { !ready }
+        splash.setOnExitAnimationListener { provider ->
+            // The orb grows and fades into the app.
+            provider.iconView.animate().scaleX(1.6f).scaleY(1.6f).alpha(0f).setDuration(320).start()
+            provider.view.animate().alpha(0f).setDuration(380).withEndAction { provider.remove() }.start()
+        }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Launch the system fingerprint prompt whenever the coordinator reaches that stage.
@@ -87,7 +103,10 @@ class MainActivity : ComponentActivity() {
             JarvisTheme {
                 Surface(Modifier.fillMaxSize()) {
                     val settings by settingsRepository.settings.collectAsStateWithLifecycle(initialValue = null)
-                    settings?.let { JarvisNavHost(it) } ?: Box(Modifier.fillMaxSize())
+                    settings?.let {
+                        LaunchedEffect(Unit) { ready = true }
+                        JarvisNavHost(it)
+                    } ?: Box(Modifier.fillMaxSize())
                     AuthHost(auth)
                 }
             }
@@ -106,7 +125,15 @@ private fun JarvisNavHost(initial: AppSettings) {
     val nav = rememberNavController()
     // Decide the start screen once; later settings changes must not reset navigation.
     val start = remember { if (initial.onboardingComplete) Routes.CHAT else Routes.ONBOARDING }
-    NavHost(navController = nav, startDestination = start) {
+    NavHost(
+        navController = nav,
+        startDestination = start,
+        // Gentle slide + fade between screens, like production apps.
+        enterTransition = { slideInHorizontally(tween(320)) { it / 5 } + fadeIn(tween(320)) },
+        exitTransition = { fadeOut(tween(200)) },
+        popEnterTransition = { fadeIn(tween(260)) },
+        popExitTransition = { slideOutHorizontally(tween(280)) { it / 5 } + fadeOut(tween(280)) },
+    ) {
         composable(Routes.ONBOARDING) {
             OnboardingScreen(onFinished = {
                 nav.navigate(Routes.CHAT) { popUpTo(Routes.ONBOARDING) { inclusive = true } }
@@ -118,6 +145,7 @@ private fun JarvisNavHost(initial: AppSettings) {
                 onOpenUsage = { nav.navigate(Routes.USAGE) },
                 onOpenHistory = { nav.navigate(Routes.HISTORY) },
                 onOpenAudit = { nav.navigate(Routes.AUDIT) },
+                onOpenSecurity = { nav.navigate(Routes.SECURITY) },
             )
         }
         composable(Routes.HISTORY) { HistoryScreen(onBack = { nav.popBackStack() }, onOpened = { nav.popBackStack() }) }

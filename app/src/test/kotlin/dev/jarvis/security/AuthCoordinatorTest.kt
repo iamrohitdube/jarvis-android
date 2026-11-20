@@ -233,6 +233,14 @@ class AuthCoordinatorTest {
         assertTrue(audit.events.any { it.action == "session_lock" && it.detail == "manual" })
     }
 
+    @Test fun screenOffKeepsRevealedMessagesButAnExplicitLockHidesThem() = runTest {
+        sessions.reveal(listOf(7L))
+        auth.lock(AuthCoordinator.SCREEN_OFF)
+        assertEquals(setOf(7L), sessions.revealed.value)
+        auth.lock("manual")
+        assertTrue(sessions.revealed.value.isEmpty())
+    }
+
     @Test fun unlockForReadingSavedMessages() = runTest {
         val r = async { auth.unlock() }.also { runCurrent() }
         auth.choose(AuthMethod.BIOMETRIC); runCurrent()

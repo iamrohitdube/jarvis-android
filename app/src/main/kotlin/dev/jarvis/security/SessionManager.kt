@@ -47,4 +47,18 @@ class SessionManager(private val clock: () -> Long = System::currentTimeMillis) 
 
     /** Ends every session (screen off, "lock", or Settings → Lock now). */
     fun lock() { _sessions.value = emptyMap() }
+
+    private val _revealed = MutableStateFlow<Set<Long>>(emptySet())
+    /**
+     * Saved sensitive messages the user has already seen unlocked. They stay visible for the rest of
+     * this app process, even after the session expires or the screen turns off; only an explicit
+     * "lock" hides them again. In memory only: a restart hides them.
+     */
+    val revealed: StateFlow<Set<Long>> = _revealed
+
+    fun reveal(ids: Collection<Long>) {
+        if (ids.isNotEmpty() && !_revealed.value.containsAll(ids)) _revealed.value = _revealed.value + ids
+    }
+
+    fun forgetReveals() { _revealed.value = emptySet() }
 }

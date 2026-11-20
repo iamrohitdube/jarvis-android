@@ -1,7 +1,34 @@
 # PROGRESS
 
 ## Current phase
-**Phase 3: Security.** Done and device-tested (2026-11-20). Phase 4 starts when you say go.
+**Design polish pass** (between Phases 3 and 4): built and device-tested (2026-11-21, "looks good").
+Not yet committed: goes up as a pull request. Phase 4 starts when you say go.
+Phase 3: Security. Done and device-tested (2026-11-20).
+
+## Design polish: done (code), see D19
+- [x] Brand theme (navy + blue/cyan/violet), shapes, type; JARVIS orb identity
+- [x] Adaptive app icon (+ themed monochrome) and animated launch screen
+- [x] Chat: navigation drawer, orb avatar, bubbles, status chips, typing dots, pill composer with Send→Stop,
+  greeting + suggestion chips, animated items, screen transitions
+- [x] Settings / Security / Onboarding / Usage / History / Audit redesigned (cards, icon tiles, chips,
+  "Saved ✓" buttons, segmented policy control, hero usage card)
+- [x] Fix: PIN dialog shows "Saving…" and closes itself on success
+- [x] Fix: fields scroll above the keyboard (Settings, Security, Onboarding, Chat)
+- [x] Change: unlocked sensitive replies stay visible until an explicit "lock" (not on timeout/screen-off)
+- [x] 2 new unit tests for the reveal behaviour
+- [x] Compiles; **155 unit tests, 0 failures**; debug APK built (SHA-256 `6dc09957…b5daa41`)
+- [x] Swapped `material-icons-extended` (debug APK ~76 MB, ~20 min builds) for `AppIcons`: the 40 icons used,
+  from Google's Material Icons (Apache-2.0)
+- [ ] Release (R8) check before the PR
+
+## Design polish: device checklist (user: "looks good", 2026-11-21)
+1. App icon on the home screen (and themed icon if you use Material You themed icons); launch animation.
+2. Chat: drawer (☰), recent chats, New chat (+); suggestion chips; reply chips; Stop while streaming.
+3. Settings → Data on this phone: tap the minutes box; it should move up above the keyboard.
+4. Security → Change PIN: "Saving…" then the dialog closes by itself.
+5. Unlock an old net-worth reply, wait 3 minutes or turn the screen off and on: it stays visible. Type "lock":
+   it hides again.
+6. Light mode (phone in light theme) looks right too.
 Phase 2: done and device-tested (2026-11-20). Phase 1: done and device-tested (2026-11-20).
 
 ## Phase 3: done
