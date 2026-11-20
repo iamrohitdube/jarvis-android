@@ -1,8 +1,53 @@
 # PROGRESS
 
 ## Current phase
-**Phase 3: Security.** In progress (started 2026-11-20).
+**Phase 3: Security.** Done and device-tested (2026-11-20). Phase 4 starts when you say go.
 Phase 2: done and device-tested (2026-11-20). Phase 1: done and device-tested (2026-11-20).
+
+## Phase 3: done
+- [x] Access tiers enforced in code (`AuthCoordinator` gate in `AgentLoop`, before saved data or connectors):
+  open / personal (recent unlock) / sensitive (PIN or fingerprint) (D18)
+- [x] PIN: set/change/remove in Settings → Security (needs fingerprint or screen lock first), 4-8 digits, weak PINs
+  rejected, salted PBKDF2 600k hash in the encrypted store, never sent to Claude or logged (D16)
+- [x] 3-strike lockout: only well-formed wrong PINs count; persisted; only fingerprint/screen lock resets it;
+  notification on lockout
+- [x] Fingerprint via androidx.biometric 1.4.0-rc01 (`registerForAuthenticationResult`); Android 10 handled (D15)
+- [x] "That's sensitive. PIN or fingerprint?" with 6 s default to fingerprint; "…, fingerprint" / "…, use PIN"
+  pre-empts it
+- [x] Sessions: sensitive 2 min, personal 5 min (editable); end on screen-off, "lock", Lock now
+- [x] Screen-only delivery: fingerprint answers are flagged "Shown on screen only" (voice in Phase 4 honours it)
+- [x] Sensitive replies hidden in Chat until you unlock (History can't bypass the gate); DB v1→v2 auto-migration
+- [x] Tool policy: Strict / Smart (default) / Auto + per-tool Default/Allow/Ask/Deny (D17)
+- [x] Audit: every auth event, policy change and lock; no secrets
+- [x] Onboarding step 3 (Security) added; existing installs see the wizard once more to set a PIN or skip
+- [x] 50 new unit tests: hasher, PIN rules, lockout persistence/reset, sessions, policy matrix, method parsing,
+  the full PIN/fingerprint flow with virtual time, the agent gate, and a real v1→v2 database migration
+
+## Phase 3: verified on PC (2026-11-20)
+- `gradlew testDebugUnitTest`: **153 tests, 0 failures**.
+- `assembleDebug` and `assembleRelease` (R8) build. Debug APK ~42.6 MB, release ~4.9 MB (biometric library +
+  its fragment dependency add ~0.9 MB). Test APK SHA-256 `28f7f286…4445d0c`.
+- Fixed after that build (compiles; ships with the Phase 4 APK): when the PIN locks mid-prompt, the fingerprint
+  prompt's subtitle now says "PIN is locked, use fingerprint." In the test APK the message isn't shown there.
+
+## Phase 3: device checklist (user reports all working, 2026-11-20; APK SHA-256 `28f7f286…4445d0c`)
+1. Update over the existing app. The setup wizard appears once with the new **Security** step: tap **Set PIN**,
+   confirm with your fingerprint, enter a PIN twice (1234 or 1111 should be refused). Allow notifications if asked.
+2. Open History: your old chats are still there (database upgrade worked).
+3. Ask "what's my net worth?" → "That's sensitive. PIN or fingerprint?" Wait 6 s without tapping: the fingerprint
+   prompt should open by itself. After it, the reply says "Shown on screen only".
+4. Ask again within 2 minutes: no prompt. Turn the screen off and on, ask again: it prompts again.
+5. Choose **PIN**, enter a wrong PIN twice ("2 tries left", "1 try left"), then a typo like "12" (no penalty),
+   then the right PIN.
+6. Lockout: enter 3 wrong PINs. You should get "PIN is locked, use fingerprint." plus a notification; fingerprint
+   unlocks it, and Settings → Security no longer says LOCKED.
+7. Close and reopen the app: the old net-worth reply shows "Sensitive. Hidden until you unlock." Tap **Unlock**.
+8. Type "lock": it says "Locked." without calling Claude; the next net-worth question prompts again.
+9. "net worth, fingerprint" goes straight to the fingerprint prompt.
+10. Settings → Security → set "Total net worth…" to **Deny**: asking net worth says it's turned off (no cost on
+    the Usage screen). Set it back to Default.
+11. Audit log → Auth filter: prompts, PIN wrong/ok, lockout, reset, lock, with no PIN digits anywhere.
+12. If your phone is Android 10: the fingerprint prompt shows "Use PIN" instead of your phone's screen lock option.
 
 ## Phase 2: done
 - [x] Room 3 database (`jarvis.db`): conversations, messages, snapshots, audit log, usage log (D13)
@@ -121,21 +166,22 @@ See [docs/decisions.md](docs/decisions.md) (D1–D10). Key ones:
 - Keystore + DataStore instead of the deprecated EncryptedSharedPreferences.
 
 ## Known limitations / deferred
-- No auth gate on finance yet (Tier 2 gate is Phase 3).
-- Database isn't encrypted with an app key; relies on Android sandbox + file-based encryption (D14; revisit in Phase 3).
+- Fingerprint result not bound to a Keystore key (no CryptoObject); see D15.
+- Database isn't encrypted with an app key; relies on Android sandbox + file-based encryption (D14; revisit before public release).
 - After the app process is killed, it opens a new chat (old chats are in History).
 - No Diagnostics screen or QR key import yet.
 - No context compaction: the last 8 turns (clipped) are resent (compaction is Phase 7).
 - Placeholder launcher icon (system default).
 
 ## Open questions for you
-0. **Database encryption:** add app-level encryption (e.g. SQLCipher, which adds native libraries and APK size) in Phase 3, or rely on Android's
-   built-in protection? I'd decide it with the PIN/fingerprint work.
+0. **Database encryption:** still open. Sensitive replies are now hidden in the UI, but the database file isn't
+   app-encrypted (SQLCipher adds native libraries and APK size). Recommendation: keep relying on Android's
+   protection for now and revisit before the public release (Phase 10).
 1. **Licence:** Porcupine's Android SDK is Apache-2.0 (needs a per-user AccessKey). Apache-2.0 for this repo?
 2. **Project folder:** the spec shows `jarvis-android/`; I built at the workspace root (`AI Assistent/`). Fine, or rename?
 3. **Effort/latency:** chat runs at `effort: low` (cheapest). Kept for now.
 4. **Routing:** now Haiku 5.5 everywhere by default (D11). Revisit after device testing if answers feel weak.
 
 ## Next
-Phase 3 (Security: tiers, PIN + hashing, 3-strike lockout, fingerprint, sessions, PIN-or-fingerprint flow,
-screen-only delivery, tool policy). **Starts only after you OK Phase 2.**
+Phase 4 (Voice, push-to-talk: speech-to-text, streaming text-to-speech, spoken replies, quiet mode, barge-in).
+**Starts only after you OK Phase 3.**

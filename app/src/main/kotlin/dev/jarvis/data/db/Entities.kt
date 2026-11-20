@@ -1,5 +1,6 @@
 package dev.jarvis.data.db
 
+import androidx.room3.ColumnInfo
 import androidx.room3.Entity
 import androidx.room3.Index
 import androidx.room3.PrimaryKey
@@ -30,6 +31,10 @@ data class MessageEntity(
     val dataSources: String? = null,
     /** True for failed replies; kept for the record but never resent to the model. */
     val failed: Boolean = false,
+    /** Contains Tier 2 data: text is hidden in Chat/History until a sensitive session is active. */
+    @ColumnInfo(defaultValue = "0") val sensitive: Boolean = false,
+    /** Delivered via fingerprint: show on screen, never speak it (used by voice in Phase 4). */
+    @ColumnInfo(defaultValue = "0") val screenOnly: Boolean = false,
 )
 
 /**

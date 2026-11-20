@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jarvis.data.OnboardingStep
+import dev.jarvis.ui.security.PinSection
+import dev.jarvis.ui.security.SecurityViewModel
 import dev.jarvis.data.StepStatus
 import dev.jarvis.ui.settings.ApiKeySection
 import dev.jarvis.ui.settings.ConnectorsSection
@@ -33,7 +35,11 @@ import dev.jarvis.ui.settings.SettingsViewModel
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OnboardingScreen(onFinished: () -> Unit, vm: SettingsViewModel = hiltViewModel()) {
+fun OnboardingScreen(
+    onFinished: () -> Unit,
+    vm: SettingsViewModel = hiltViewModel(),
+    securityVm: SecurityViewModel = hiltViewModel(),
+) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val s = settings ?: return
     val steps = s.onboarding
@@ -50,6 +56,13 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: SettingsViewModel = hiltViewMod
 
             StepHeader(1, OnboardingStep.ANTHROPIC_KEY, steps.getValue(OnboardingStep.ANTHROPIC_KEY))
             ApiKeySection(vm, onKeyOk = { vm.setStep(OnboardingStep.ANTHROPIC_KEY, StepStatus.DONE) })
+
+            StepHeader(3, OnboardingStep.SECURITY, steps.getValue(OnboardingStep.SECURITY))
+            Hint("Set a JARVIS PIN for sensitive answers like your net worth. Fingerprint works too, and is used if you skip this.")
+            PinSection(securityVm)
+            if (steps.getValue(OnboardingStep.SECURITY) == StepStatus.TODO) {
+                TextButton(onClick = { securityVm.skipOnboardingStep() }) { Text("Skip, use fingerprint only") }
+            }
 
             StepHeader(4, OnboardingStep.CONNECTORS, steps.getValue(OnboardingStep.CONNECTORS))
             Hint("Sign in, then tap Test. Optional: skip and connect later in Settings.")

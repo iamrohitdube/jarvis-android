@@ -6,7 +6,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jarvis.agent.AgentEvent
 import dev.jarvis.agent.AgentLoop
 import dev.jarvis.agent.DataStamp
+import dev.jarvis.agent.AuthTier
 import dev.jarvis.agent.ToolRegistry
+import dev.jarvis.security.AuthCoordinator
+import dev.jarvis.security.SessionManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import dev.jarvis.claude.BudgetLevel
 import dev.jarvis.claude.UsageMeter
 import dev.jarvis.claude.UsageSummary
@@ -43,6 +50,10 @@ data class UiMessage(
     /** "Last updated" label for connector data used by this reply. */
     val dataLabel: String? = null,
     val error: UiError? = null,
+    /** Sensitive reply whose text is hidden until the user unlocks (PIN or fingerprint). */
+    val hidden: Boolean = false,
+    /** Authorised by fingerprint: shown on screen only, never spoken. */
+    val screenOnly: Boolean = false,
 )
 
 data class ChatState(
@@ -60,8 +71,15 @@ class ChatViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val history: HistoryStore,
     private val current: CurrentConversation,
+    private val auth: AuthCoordinator,
+    private val sessions: SessionManager,
     usageMeter: UsageMeter,
 ) : ViewModel() {
+
+    /** Whether a sensitive session is active; re-checked every few seconds because sessions expire by time. */
+    private val unlocked: Flow<Boolean> = combine(sessions.sessions, ticker(), settings.settings) { _, _, s ->
+        sessions.isValid(AuthTier.SENSITIVE, s.security.sessions)
+    }.distinctUntilChanged()
 
     private val live = MutableStateFlow<LiveReply?>(null)
     private val busy = MutableStateFlow(false)
@@ -72,8 +90,8 @@ class ChatViewModel @Inject constructor(
 
     private val persisted = current.id.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else history.messages(id) }
 
-    val state: StateFlow<ChatState> = combine(persisted, live, busy, lastError) { rows, liveReply, isBusy, err ->
-        val msgs = rows.map { it.toUi(err) }.toMutableList()
+    val state: StateFlow<ChatState> = combine(persisted, live, busy, lastError, unlocked) { rows, liveReply, isBusy, err, open ->
+        val msgs = rows.map { it.toUi(err, open) }.toMutableList()
         liveReply?.let { msgs += UiMessage(LIVE_ID, fromUser = false, text = it.text, streaming = true, status = it.status) }
         ChatState(msgs, isBusy)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatState())
@@ -85,6 +103,7 @@ class ChatViewModel @Inject constructor(
     fun send(raw: String) {
         val text = raw.trim()
         if (text.isEmpty() || busy.value) return
+        if (isLockCommand(text)) { lockNow(); return }
         lastUserText = text
         busy.value = true
         lastError.value = null
@@ -104,7 +123,10 @@ class ChatViewModel @Inject constructor(
                         is AgentEvent.TextDelta -> live.update { it?.copy(text = it.text + ev.text) }
                         is AgentEvent.Finished -> {
                             val body = if (ev.truncated) ev.text + "\n\n(Cut off at the length limit. Say \"continue\" for more.)" else ev.text
-                            history.addAssistantMessage(id, body, ev.model, ev.costUsd, ev.dataStamps)
+                            history.addAssistantMessage(
+                                id, body, ev.model, ev.costUsd, ev.dataStamps,
+                                sensitive = ev.sensitive, screenOnly = ev.screenOnly,
+                            )
                             finished = true
                             live.value = null
                         }
@@ -136,24 +158,38 @@ class ChatViewModel @Inject constructor(
         job = null
     }
 
+    /** "lock": ends every auth session locally; nothing is sent to Claude. */
+    private fun lockNow() = viewModelScope.launch {
+        auth.lock("voice_or_text_command")
+        val id = current.id.value ?: return@launch
+        history.addUserMessage(id, "lock")
+        history.addAssistantMessage(id, "Locked.", failed = true) // local reply; never resent as context
+    }
+
+    /** Tap on a hidden sensitive reply: PIN or fingerprint, then it's visible for the session. */
+    fun unlock() = viewModelScope.launch { auth.unlock(AuthTier.SENSITIVE) }
+
     fun newChat() {
         if (busy.value) stop()
         lastError.value = null
         current.open(null)
     }
 
-    private fun MessageEntity.toUi(err: Pair<Long, UiError>?): UiMessage {
+    private fun MessageEntity.toUi(err: Pair<Long, UiError>?, unlocked: Boolean): UiMessage {
         val fromUser = role == HistoryStore.USER
         val error = err?.takeIf { it.first == id }?.second
+        val hide = sensitive && !unlocked
         val status = when {
             fromUser -> null
+            failed && text == "Locked." -> null
             failed && error == null -> "Not completed"
             failed -> null
             else -> listOfNotNull(model?.removePrefix("claude-"), costUsd?.let { "$" + "%.4f".format(it) }).joinToString(" · ").ifEmpty { null }
         }
         return UiMessage(
-            id = id, fromUser = fromUser, text = text, status = status,
+            id = id, fromUser = fromUser, text = if (hide) "" else text, status = status,
             dataLabel = dataLabel(DataStamp.decode(dataSources)), error = error,
+            hidden = hide, screenOnly = screenOnly,
         )
     }
 
@@ -173,5 +209,8 @@ class ChatViewModel @Inject constructor(
 
     private companion object {
         const val LIVE_ID = -1L
+        private val LOCK_COMMANDS = setOf("lock", "lock it", "lock now", "lock up", "lock jarvis")
+        fun isLockCommand(text: String) = text.lowercase().trim().trimEnd('.', '!') in LOCK_COMMANDS
+        fun ticker(periodMs: Long = 5_000) = flow { while (true) { emit(Unit); delay(periodMs) } }
     }
 }

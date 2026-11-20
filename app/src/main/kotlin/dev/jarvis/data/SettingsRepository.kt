@@ -8,6 +8,11 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import dev.jarvis.agent.Models
+import dev.jarvis.security.PolicyLevel
+import dev.jarvis.security.SecuritySettings
+import dev.jarvis.security.SessionPolicy
+import dev.jarvis.security.ToolPolicy
+import dev.jarvis.security.ToolRule
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -17,6 +22,7 @@ enum class StepStatus { TODO, DONE, SKIPPED }
 /** Onboarding wizard steps. Phase 1 ships steps 1 and 4 (CLAUDE.md section 15). */
 enum class OnboardingStep(val title: String) {
     ANTHROPIC_KEY("Anthropic API key"),
+    SECURITY("Security"),
     CONNECTORS("Connectors"),
 }
 
@@ -34,9 +40,22 @@ data class AppSettings(
     val stopAtBudget: Boolean = true,
     /** Reuse cached connector snapshots (e.g. net worth) younger than this; 0 = always fetch live. */
     val snapshotMaxAgeMinutes: Int = DEFAULT_SNAPSHOT_MINUTES,
+    /** Tool policy (CLAUDE.md section 6). Enforced by AuthCoordinator, never by prompts. */
+    val policyLevel: PolicyLevel = PolicyLevel.SMART,
+    val toolRules: Map<String, ToolRule> = emptyMap(),
+    /** Session lengths: Tier 1 personal ~5 min, Tier 2 sensitive ~2 min. */
+    val personalSessionMinutes: Int = 5,
+    val sensitiveSessionMinutes: Int = 2,
     val onboarding: Map<OnboardingStep, StepStatus> = OnboardingStep.entries.associateWith { StepStatus.TODO },
 ) {
     val onboardingComplete: Boolean get() = onboarding.values.none { it == StepStatus.TODO }
+
+    val security: SecuritySettings
+        get() = SecuritySettings(
+            level = policyLevel,
+            rules = toolRules,
+            sessions = SessionPolicy(personalSessionMinutes * 60_000L, sensitiveSessionMinutes * 60_000L),
+        )
 
     companion object {
         const val DEFAULT_BUDGET_USD = 5.0
@@ -55,6 +74,10 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             monthlyBudgetUsd = p[BUDGET] ?: AppSettings.DEFAULT_BUDGET_USD,
             stopAtBudget = p[STOP_AT_BUDGET] ?: true,
             snapshotMaxAgeMinutes = p[SNAPSHOT_MINUTES] ?: AppSettings.DEFAULT_SNAPSHOT_MINUTES,
+            policyLevel = p[POLICY_LEVEL]?.let { runCatching { PolicyLevel.valueOf(it) }.getOrNull() } ?: PolicyLevel.SMART,
+            toolRules = ToolPolicy.decode(p[TOOL_RULES]),
+            personalSessionMinutes = p[PERSONAL_MINUTES] ?: 5,
+            sensitiveSessionMinutes = p[SENSITIVE_MINUTES] ?: 2,
             onboarding = OnboardingStep.entries.associateWith { step ->
                 p[stepKey(step)]?.let { runCatching { StepStatus.valueOf(it) }.getOrNull() } ?: StepStatus.TODO
             },
@@ -70,6 +93,16 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setMonthlyBudget(usd: Double) = store.edit { it[BUDGET] = usd.coerceAtLeast(0.0) }
     suspend fun setStopAtBudget(v: Boolean) = store.edit { it[STOP_AT_BUDGET] = v }
     suspend fun setSnapshotMaxAgeMinutes(v: Int) = store.edit { it[SNAPSHOT_MINUTES] = v.coerceIn(0, 24 * 60) }
+    suspend fun setPolicyLevel(v: PolicyLevel) = store.edit { it[POLICY_LEVEL] = v.name }
+    suspend fun setToolRule(tool: String, rule: ToolRule) = store.edit { p ->
+        val rules = ToolPolicy.decode(p[TOOL_RULES]).toMutableMap().apply { if (rule == ToolRule.DEFAULT) remove(tool) else put(tool, rule) }
+        p[TOOL_RULES] = ToolPolicy.encode(rules)
+    }
+    /** Session lengths are clamped: Tier 2 1-10 min, Tier 1 1-30 min. */
+    suspend fun setSessionMinutes(personal: Int, sensitive: Int) = store.edit {
+        it[PERSONAL_MINUTES] = personal.coerceIn(1, 30)
+        it[SENSITIVE_MINUTES] = sensitive.coerceIn(1, 10)
+    }
     suspend fun setStep(step: OnboardingStep, status: StepStatus) = store.edit { it[stepKey(step)] = status.name }
 
     private companion object {
@@ -80,6 +113,10 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val BUDGET = doublePreferencesKey("monthly_budget_usd")
         val STOP_AT_BUDGET = booleanPreferencesKey("stop_at_budget")
         val SNAPSHOT_MINUTES = intPreferencesKey("snapshot_max_age_minutes")
+        val POLICY_LEVEL = stringPreferencesKey("policy_level")
+        val TOOL_RULES = stringPreferencesKey("tool_rules")
+        val PERSONAL_MINUTES = intPreferencesKey("session_personal_minutes")
+        val SENSITIVE_MINUTES = intPreferencesKey("session_sensitive_minutes")
         fun stepKey(step: OnboardingStep) = stringPreferencesKey("onboarding_${step.name.lowercase()}")
     }
 }

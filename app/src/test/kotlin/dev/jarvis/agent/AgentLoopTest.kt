@@ -17,9 +17,14 @@ import dev.jarvis.data.AuditCategory
 import dev.jarvis.data.AuditEvent
 import dev.jarvis.data.AuditSink
 import dev.jarvis.data.SnapshotStore
+import dev.jarvis.security.AccessController
+import dev.jarvis.security.AccessResult
+import dev.jarvis.security.AuthMethod
+import dev.jarvis.security.DenyReason
 import kotlinx.serialization.json.Json
 import dev.jarvis.tempUsageMeter
 import dev.jarvis.testDb
+import dev.jarvis.allowAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -84,7 +89,7 @@ class AgentLoopTest {
 
     @Test fun simpleTurnFinishesAndLogsUsage() = runBlocking {
         val llm = FakeLlm({ reply("Hello.") })
-        val events = AgentLoop(llm, emptyMap(), meter).run(emptyList(), "hi", settings).toList()
+        val events = AgentLoop(llm, emptyMap(), meter, allowAll).run(emptyList(), "hi", settings).toList()
         val done = events.last() as AgentEvent.Finished
         assertEquals("Hello.", done.text)
         val logged = meter.entries.first()
@@ -94,7 +99,7 @@ class AgentLoopTest {
 
     @Test fun missingConnectorAsksForSignInWithoutCallingClaude() = runBlocking {
         val llm = FakeLlm()
-        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector(token = null)), meter)
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector(token = null)), meter, allowAll)
             .run(emptyList(), "what's my net worth", settings).toList()
         val failed = events.last() as AgentEvent.Failed
         assertTrue(failed.error is AgentError.ConnectorSignIn)
@@ -104,7 +109,7 @@ class AgentLoopTest {
     @Test fun pauseTurnIsResumedWithAssistantContent() = runBlocking {
         val toolUse = JsonObject(mapOf("type" to JsonPrimitive("mcp_tool_use"), "id" to JsonPrimitive("t1")))
         val llm = FakeLlm({ reply("Checking. ", stop = "pause_turn", content = listOf(toolUse)) }, { reply("₹12.3 lakh.") })
-        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter)
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, allowAll)
             .run(emptyList(), "net worth", settings).toList()
 
         assertEquals("Checking. ₹12.3 lakh.", (events.last() as AgentEvent.Finished).text)
@@ -121,7 +126,7 @@ class AgentLoopTest {
     @Test fun pauseTurnContinuationsAreCapped() = runBlocking {
         val script = Array(AgentLoop.MAX_CONTINUATIONS + 1) { { reply("x", stop = "pause_turn") } }
         val llm = FakeLlm(*script)
-        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter)
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, allowAll)
             .run(emptyList(), "net worth", settings).toList()
         assertEquals(AgentLoop.MAX_CONTINUATIONS + 1, llm.requests.size)
     }
@@ -132,7 +137,7 @@ class AgentLoopTest {
             { throw LlmException.InvalidRequest("MCP server 'indmoney' returned 401 Unauthorized") },
             { reply("Done.") },
         )
-        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to connector), meter)
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to connector), meter, allowAll)
             .run(emptyList(), "net worth", settings).toList()
         assertTrue(events.last() is AgentEvent.Finished)
         assertEquals(1, connector.refreshes)
@@ -143,7 +148,7 @@ class AgentLoopTest {
     @Test fun mcpAuthErrorWithFailedRefreshAsksForSignIn() = runBlocking {
         val connector = FakeConnector("stale", refreshWorks = false)
         val llm = FakeLlm({ throw LlmException.InvalidRequest("MCP server authentication failed: invalid token") })
-        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to connector), meter)
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to connector), meter, allowAll)
             .run(emptyList(), "net worth", settings).toList()
         assertTrue((events.last() as AgentEvent.Failed).error is AgentError.ConnectorSignIn)
     }
@@ -151,13 +156,13 @@ class AgentLoopTest {
     @Test fun refusalIsReportedWithCategory() = runBlocking {
         val details = JsonObject(mapOf("type" to JsonPrimitive("refusal"), "category" to JsonPrimitive("cyber")))
         val llm = FakeLlm({ reply("", stop = "refusal", details = details) })
-        val events = AgentLoop(llm, emptyMap(), meter).run(emptyList(), "hi", settings).toList()
+        val events = AgentLoop(llm, emptyMap(), meter, allowAll).run(emptyList(), "hi", settings).toList()
         assertEquals(AgentError.Refused("cyber"), (events.last() as AgentEvent.Failed).error)
     }
 
     @Test fun badKeyIsMapped() = runBlocking {
         val llm = FakeLlm({ throw LlmException.Unauthorized() })
-        val events = AgentLoop(llm, emptyMap(), meter).run(emptyList(), "hi", settings).toList()
+        val events = AgentLoop(llm, emptyMap(), meter, allowAll).run(emptyList(), "hi", settings).toList()
         assertEquals(AgentError.BadKey, (events.last() as AgentEvent.Failed).error)
     }
 
@@ -185,21 +190,21 @@ class AgentLoopTest {
     @Test fun budgetReachedStopsBeforeAnyRequest() = runBlocking {
         spend(5.0)
         val llm = FakeLlm()
-        val events = AgentLoop(llm, emptyMap(), meter).run(emptyList(), "hi", settings.copy(monthlyBudgetUsd = 5.0)).toList()
+        val events = AgentLoop(llm, emptyMap(), meter, allowAll).run(emptyList(), "hi", settings.copy(monthlyBudgetUsd = 5.0)).toList()
         assertEquals(AgentError.BudgetReached(5.0), (events.single() as AgentEvent.Failed).error)
         assertTrue(llm.requests.isEmpty())
     }
 
     @Test fun budgetStopCanBeTurnedOff() = runBlocking {
         spend(5.0)
-        val events = AgentLoop(FakeLlm({ reply("ok", usage = Usage()) }), emptyMap(), meter)
+        val events = AgentLoop(FakeLlm({ reply("ok", usage = Usage()) }), emptyMap(), meter, allowAll)
             .run(emptyList(), "hi", settings.copy(monthlyBudgetUsd = 5.0, stopAtBudget = false)).toList()
         assertTrue(events.last() is AgentEvent.Finished)
     }
 
     @Test fun underBudgetRuns() = runBlocking {
         spend(4.0)
-        val events = AgentLoop(FakeLlm({ reply("ok", usage = Usage()) }), emptyMap(), meter)
+        val events = AgentLoop(FakeLlm({ reply("ok", usage = Usage()) }), emptyMap(), meter, allowAll)
             .run(emptyList(), "hi", settings.copy(monthlyBudgetUsd = 5.0)).toList()
         assertTrue(events.last() is AgentEvent.Finished)
     }
@@ -222,7 +227,7 @@ class AgentLoopTest {
     @Test fun liveCallSavesSnapshotStampsReplyAndAudits() = runBlocking {
         val audit = RecordingAudit()
         val llm = FakeLlm({ reply("About 1 lakh.", content = netWorthCall) })
-        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots, audit = audit)
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, allowAll, snapshots = snapshots, audit = audit)
             .run(emptyList(), "what's my net worth", settings).toList()
 
         val done = events.last() as AgentEvent.Finished
@@ -240,7 +245,7 @@ class AgentLoopTest {
         val audit = RecordingAudit()
         val llm = FakeLlm({ reply("Still about 1 lakh.") })
         // Signed-out connector: any attempt to use it would fail with ConnectorSignIn.
-        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector(token = null)), meter, snapshots = snapshots, audit = audit)
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector(token = null)), meter, allowAll, snapshots = snapshots, audit = audit)
             .run(emptyList(), "what's my net worth", settings).toList()
 
         assertTrue((events.first() as AgentEvent.Routed).fromCache)
@@ -260,7 +265,7 @@ class AgentLoopTest {
     @Test fun askingForLatestBypassesSavedData() = runBlocking {
         snapshots.save(ToolRegistry.INDMONEY, "networth_snapshot", "old")
         val llm = FakeLlm({ reply("Fresh numbers.", content = netWorthCall) })
-        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots)
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, allowAll, snapshots = snapshots)
             .run(emptyList(), "refresh my net worth", settings).toList()
         assertTrue(llm.requests.single().body["mcp_servers"] != null)
         assertEquals("TOTAL_100", snapshots.all.first().single().content) // replaced with the live result
@@ -269,7 +274,7 @@ class AgentLoopTest {
     @Test fun reuseCanBeTurnedOff() = runBlocking {
         snapshots.save(ToolRegistry.INDMONEY, "networth_snapshot", "old")
         val llm = FakeLlm({ reply("Live.") })
-        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots)
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, allowAll, snapshots = snapshots)
             .run(emptyList(), "net worth", settings.copy(snapshotMaxAgeMinutes = 0)).toList()
         assertTrue(llm.requests.single().body["mcp_servers"] != null)
     }
@@ -282,7 +287,7 @@ class AgentLoopTest {
             block("""{"type":"mcp_tool_result","tool_use_id":"n","is_error":true,"content":"oops"}"""),
         )
         val llm = FakeLlm({ reply("Partial.", content = calls) })
-        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, snapshots = snapshots)
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, allowAll, snapshots = snapshots)
             .run(emptyList(), "net worth and holdings", settings).toList()
         assertTrue(snapshots.all.first().isEmpty())
     }
@@ -290,9 +295,64 @@ class AgentLoopTest {
     @Test fun refusalIsAudited() = runBlocking {
         val audit = RecordingAudit()
         val details = JsonObject(mapOf("category" to JsonPrimitive("cyber")))
-        AgentLoop(FakeLlm({ reply("", stop = "refusal", details = details) }), emptyMap(), meter, audit = audit)
+        AgentLoop(FakeLlm({ reply("", stop = "refusal", details = details) }), emptyMap(), meter, allowAll, audit = audit)
             .run(emptyList(), "hi", settings).toList()
         assertEquals("refused", audit.events.single { it.category == AuditCategory.REQUEST }.outcome)
+    }
+
+    // ---- Phase 3: security gate ----
+
+    private class ScriptedGate(val result: (List<ToolSpec>) -> AccessResult) : AccessController {
+        val calls = mutableListOf<Pair<List<String>, AuthMethod?>>()
+        override suspend fun authorize(tools: List<ToolSpec>, preferred: AuthMethod?): AccessResult {
+            calls += tools.map { it.name } to preferred
+            return result(tools)
+        }
+    }
+
+    @Test fun deniedAccessMakesNoRequestAndUsesNoSavedData() = runBlocking {
+        snapshots.save(ToolRegistry.INDMONEY, "networth_snapshot", "TOTAL_100")
+        val llm = FakeLlm()
+        val gate = ScriptedGate { AccessResult.Denied(DenyReason.CANCELLED, it.map { t -> t.name }) }
+        val events = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, gate, snapshots = snapshots)
+            .run(emptyList(), "what's my net worth", settings).toList()
+        val failed = events.single() as AgentEvent.Failed
+        assertTrue(failed.error is AgentError.AccessDenied)
+        assertTrue(llm.requests.isEmpty())
+    }
+
+    @Test fun grantedSensitiveReplyIsFlaggedScreenOnly() = runBlocking {
+        val gate = ScriptedGate { AccessResult.Granted(it, AuthMethod.BIOMETRIC, screenOnly = true, sensitive = true) }
+        val llm = FakeLlm({ reply("About 1 lakh.", content = netWorthCall) })
+        val done = AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, gate)
+            .run(emptyList(), "what's my net worth", settings).toList().last() as AgentEvent.Finished
+        assertTrue(done.sensitive && done.screenOnly)
+    }
+
+    @Test fun preEmptedMethodReachesTheGateAndIsNotSentToClaude() = runBlocking {
+        val gate = ScriptedGate { AccessResult.Granted(it, AuthMethod.BIOMETRIC, screenOnly = true, sensitive = true) }
+        val llm = FakeLlm({ reply("ok") })
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, gate)
+            .run(emptyList(), "net worth, fingerprint", settings).toList()
+        assertEquals(AuthMethod.BIOMETRIC, gate.calls.single().second)
+        val question = llm.requests.single().body["messages"]!!.jsonArray.last().jsonObject["content"]!!.jsonPrimitive.content
+        assertEquals("net worth", question)
+    }
+
+    @Test fun deniedToolsAreRemovedFromTheRequest() = runBlocking {
+        val gate = ScriptedGate { tools -> AccessResult.Granted(tools.filter { it.name != "lookup_ind_keys" }, null, false, true) }
+        val llm = FakeLlm({ reply("ok") })
+        AgentLoop(llm, mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, gate)
+            .run(emptyList(), "what's my net worth", settings).toList()
+        val configs = llm.requests.single().body["tools"]!!.jsonArray[0].jsonObject["configs"]!!.jsonObject.keys
+        assertEquals(setOf("networth_snapshot"), configs)
+    }
+
+    @Test fun toolFreeQuestionsNeverReachTheGate() = runBlocking {
+        val gate = ScriptedGate { error("must not be called") }
+        val events = AgentLoop(FakeLlm({ reply("Hello.") }), emptyMap(), meter, gate).run(emptyList(), "hi", settings).toList()
+        assertTrue(events.last() is AgentEvent.Finished)
+        assertTrue(gate.calls.isEmpty())
     }
 
     @Test fun mcpAuthHeuristic() {

@@ -104,6 +104,7 @@ fun ChatScreen(
                 items(state.messages, key = { it.id }) { msg ->
                     MessageBubble(
                         msg,
+                        onUnlock = vm::unlock,
                         onFix = { action ->
                             when (action) {
                                 FixAction.OPEN_SETTINGS -> onOpenSettings()
@@ -162,7 +163,7 @@ private fun EmptyHint() {
 }
 
 @Composable
-private fun MessageBubble(msg: UiMessage, onFix: (FixAction) -> Unit) {
+private fun MessageBubble(msg: UiMessage, onFix: (FixAction) -> Unit, onUnlock: () -> Unit) {
     val align = if (msg.fromUser) Alignment.CenterEnd else Alignment.CenterStart
     val bg = if (msg.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val fg = if (msg.fromUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
@@ -172,10 +173,16 @@ private fun MessageBubble(msg: UiMessage, onFix: (FixAction) -> Unit) {
                 .background(bg, RoundedCornerShape(14.dp))
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            if (msg.text.isNotEmpty()) {
+            if (msg.hidden) {
+                Text("Sensitive. Hidden until you unlock.", color = fg, style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = onUnlock) { Text("Unlock") }
+            } else if (msg.text.isNotEmpty()) {
                 SelectionContainer { Text(msg.text, color = fg) }
             } else if (msg.streaming) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+            if (msg.screenOnly && !msg.hidden) {
+                Text("Shown on screen only", style = MaterialTheme.typography.labelSmall, color = fg.copy(alpha = 0.7f), modifier = Modifier.padding(top = 4.dp))
             }
             msg.dataLabel?.let {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))

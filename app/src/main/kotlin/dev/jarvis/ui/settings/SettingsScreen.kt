@@ -34,7 +34,7 @@ import dev.jarvis.ui.history.ConfirmDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(onBack: () -> Unit, onOpenSecurity: () -> Unit, vm: SettingsViewModel = hiltViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     Scaffold(
         topBar = {
@@ -49,6 +49,10 @@ fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = hiltViewModel()) 
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             ApiKeySection(vm)
+            SectionCard("Security") {
+                Hint("PIN, fingerprint, sessions and tool permissions.")
+                OutlinedButton(onClick = onOpenSecurity) { Text("Open security settings") }
+            }
             ConnectorsSection(vm)
             settings?.let { ModelSection(vm, it) }
             settings?.let { BudgetSection(vm, it) }

@@ -111,3 +111,66 @@ start-up and then removed.
 - **At rest:** the database relies on Android's app sandbox and file-based encryption, with no app-level
   encryption. Adding SQLCipher (or similar) costs APK size and a key-management design. We'll decide in Phase 3,
   where the PIN/biometric work already handles keys.
+
+## D15. Biometric library: androidx.biometric 1.4.0-rc01 (Phase 3, 2026-11-20)
+The latest stable release (1.1.0) dates from 2021 and needs a `FragmentActivity`. 1.4.0-rc01 adds
+`registerForAuthenticationResult`, which works with our plain `ComponentActivity` (since 1.4.0-alpha06), plus
+`AuthenticationRequest`/`AuthenticationResult` types. It's a release candidate, so the API is frozen. The API was
+checked against the library jar itself, because the guide still shows the classic `BiometricPrompt`.
+- Android 11+: Class 3 biometric with the phone's screen lock as fallback, or the screen lock alone if no
+  biometric is enrolled.
+- Android 10: biometric and device credential can't be combined (official guide), so the prompt offers
+  biometric with a "Use PIN" button that switches to the JARVIS PIN.
+- No `CryptoObject` binding yet. The result gates app logic, not a Keystore key. That's acceptable for showing
+  data the app already holds. Binding can be added if a later feature needs it.
+- `onAuthAttemptFailed` (a non-matching finger) is left to the system prompt, which lets the user retry.
+
+## D16. PIN storage and lockout (Phase 3)
+- PBKDF2-HMAC-SHA256, 600,000 iterations (OWASP Password Storage Cheat Sheet, checked 2026-11-20), 16-byte random
+  salt, iterations stored with the hash. Argon2id would need a native library. The hash lives in `SecretStore`
+  (Keystore AES-GCM), because a 4-8 digit PIN is a small search space if the hash ever leaked.
+- PINs are 4-8 digits. Trivial PINs (all one digit, straight runs like 1234/9876) are rejected.
+- Only well-formed wrong PINs count. Three consecutive wrong PINs lock the PIN path. The counter lives in
+  `SecretStore`, so it survives restarts and can't be edited to unlock. A correct PIN before lockout clears the
+  counter.
+- Only a fingerprint/device-credential success resets the lockout. In code that requires a `StrongAuthProof`,
+  which the PIN path can't create. Voice (later phases) won't be able to either.
+- Setting, changing or removing the PIN needs a fingerprint/device credential when the phone has a secure lock
+  screen. Otherwise someone holding the unlocked phone could set their own PIN and read finance data.
+- The PIN is typed in a masked field in a dialog, never in the chat box. It isn't stored in history, isn't sent
+  to Claude, and isn't logged. The audit log records only outcomes.
+
+## D17. Tool policy semantics (Phase 3)
+CLAUDE.md's level descriptions are short, so this is the exact interpretation, enforced in `ToolPolicy`:
+- **STRICT:** ask for everything except open (Tier 0) reads.
+- **SMART (default):** ask for writes/actions and for sensitive (Tier 2) reads.
+- **AUTO:** like SMART, but tools the user set to Allow run without asking, writes included.
+- **Per-tool rules:**
+  - DENY always wins.
+  - ASK always asks.
+  - ALLOW is honoured for reads at any level, and for writes only in AUTO.
+  - Tools that need confirmation (send message, create event) always ask.
+- For a Tier 2 read, "ask" is satisfied by the PIN/fingerprint check itself, or by a valid sensitive session.
+  Otherwise every finance question within the 2-minute session would prompt twice. Lower-tier asks are an
+  Allow / Don't allow dialog.
+- If every tool a question needs is denied, the app answers locally ("turned off in Security settings") and
+  doesn't call Claude.
+
+## D18. Sessions, Tier 1, and sensitive data at rest (Phase 3)
+- Sessions are in memory only: Tier 2 lasts 2 min, Tier 1 lasts 5 min (both editable). A Tier 2 grant covers
+  Tier 1. All sessions end on screen-off, on "lock" (typed now, spoken from Phase 4), and on Settings → Lock now.
+- Tier 1 ("needs a recent unlock") is granted when the phone is unlocked (`ACTION_USER_PRESENT`) or when JARVIS
+  comes to the foreground on an unlocked phone. It never grants Tier 2.
+- The gate runs in `AgentLoop` after routing and before saved snapshots or connectors, so cached finance data
+  needs auth too. The prompt is neutral ("That's sensitive. PIN or fingerprint?") and is shown before any API
+  call, so no data is revealed by asking.
+- Replies that used Tier 2 data are stored with `sensitive = true`. Their text is hidden in Chat ("Sensitive.
+  Hidden until you unlock.") unless a sensitive session is active, so History doesn't bypass the gate.
+  Fingerprint-authorised replies are also stored `screenOnly = true`. Phase 4's text-to-speech will say "Done, it's
+  on your screen." instead of reading them out.
+- "net worth, fingerprint" / "..., use PIN" pre-empts the choice. Only a leading or trailing method word counts,
+  and it's removed before the question goes to Claude.
+- The database moved to version 2 (two new message columns) by Room auto-migration. A unit test builds a real v1
+  database from the exported schema and checks that history survives the upgrade.
+- Deferred to the voice phases: spoken PIN with voice match, and challenge digits. Typed PINs make challenge
+  digits unnecessary for now.

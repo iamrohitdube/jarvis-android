@@ -1,4 +1,4 @@
-# Architecture (Phase 2)
+# Architecture (Phase 3)
 
 ```
 UI (Compose)                    Agent                         Claude / connectors
@@ -21,6 +21,11 @@ OAuthRedirectActivity ────────▶ IndMoneyConnector.completeSign
 1. **Budget:** if "stop at budget" is on and this month's local estimate has reached the budget, the turn ends
    before any network call.
 2. **Route:** `ToolRouter.route()` picks a mode (Quick, Chat or Detail), a model and a tool list from keywords.
+   A leading/trailing "fingerprint" or "PIN" is removed first and kept as the preferred auth method.
+2b. **Security gate:** `AccessController.authorize()` (implemented by `AuthCoordinator`) applies the tool policy
+   (denied tools removed; all denied = local answer) and the tier check: a valid session, or the PIN-or-fingerprint
+   prompt. Nothing below runs unless this grants access. The grant says whether the reply is sensitive and
+   screen-only.
 3. **Saved data:** if every routed tool is a whole-account snapshot tool (net worth, holdings, SIPs, watchlist)
    with a result younger than the reuse window (default 15 min), the tools are dropped and the saved results are
    attached to the question as an untrusted `<cached_data>` block. Saying "refresh", "latest" or "live" skips this.
@@ -50,7 +55,7 @@ Context sent to Claude is still only the last 8 turns, clipped (`AgentLoop.trimH
 Phase 7. The schema is exported to `app/schemas/` so future versions can ship tested migrations.
 
 ## Swappable interfaces
-`LlmClient`, `SecretStore`, `Connector`, `AuditSink`. Coming later: `WakeWordEngine`, `Stt`, `Tts`.
+`LlmClient`, `SecretStore`, `Connector`, `AuditSink`, `AccessController`, `BiometricAvailability`. Coming later: `WakeWordEngine`, `Stt`, `Tts`.
 
 ## On disk vs in memory
 - DataStore: settings and encrypted secrets.

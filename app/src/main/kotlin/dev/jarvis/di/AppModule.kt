@@ -24,7 +24,12 @@ import dev.jarvis.data.db.JarvisDatabase
 import dev.jarvis.memory.HistoryStore
 import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
+import dev.jarvis.security.AndroidBiometricAvailability
+import dev.jarvis.security.AndroidLockoutNotifier
+import dev.jarvis.security.AuthCoordinator
 import dev.jarvis.security.KeystoreSecretStore
+import dev.jarvis.security.PinAuthenticator
+import dev.jarvis.security.SessionManager
 import dev.jarvis.security.SecretKey
 import dev.jarvis.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
@@ -122,11 +127,35 @@ object AppModule {
         mapOf(indMoney.id to indMoney)
 
     @Provides @Singleton
+    fun sessionManager() = SessionManager()
+
+    @Provides @Singleton
+    fun pinAuthenticator(secrets: SecretStore) = PinAuthenticator(secrets)
+
+    @Provides @Singleton
+    fun biometricAvailability(@ApplicationContext c: Context) = AndroidBiometricAvailability(c)
+
+    @Provides @Singleton
+    fun authCoordinator(
+        @ApplicationContext c: Context,
+        settings: SettingsRepository,
+        sessions: SessionManager,
+        pin: PinAuthenticator,
+        biometric: AndroidBiometricAvailability,
+        audit: AuditLog,
+    ) = AuthCoordinator(
+        settings = { settings.current().security },
+        sessions = sessions, pin = pin, biometric = biometric, audit = audit,
+        notifier = AndroidLockoutNotifier(c),
+    )
+
+    @Provides @Singleton
     fun agentLoop(
         llm: LlmClient,
         connectors: Map<String, @JvmSuppressWildcards Connector>,
         usage: UsageMeter,
+        auth: AuthCoordinator,
         snapshots: SnapshotStore,
         audit: AuditLog,
-    ) = AgentLoop(llm, connectors, usage, snapshots = snapshots, audit = audit)
+    ) = AgentLoop(llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit)
 }

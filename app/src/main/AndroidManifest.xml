@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only used to alert you if your JARVIS PIN gets locked (3 wrong tries). Asked for when you set a PIN. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Lets the app find a browser that supports Custom Tabs for OAuth sign-in (package visibility). -->
     <queries>

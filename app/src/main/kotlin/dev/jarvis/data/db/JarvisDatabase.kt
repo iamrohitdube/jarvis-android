@@ -1,5 +1,6 @@
 package dev.jarvis.data.db
 
+import androidx.room3.AutoMigration
 import androidx.room3.Database
 import androidx.room3.RoomDatabase
 
@@ -15,8 +16,12 @@ import androidx.room3.RoomDatabase
         AuditEntity::class,
         UsageEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [
+        // v2 (Phase 3): messages.sensitive and messages.screenOnly, both defaulting to 0.
+        AutoMigration(from = 1, to = 2),
+    ],
 )
 abstract class JarvisDatabase : RoomDatabase() {
     abstract fun history(): HistoryDao

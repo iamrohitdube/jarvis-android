@@ -3,9 +3,10 @@
 A hands-free personal AI assistant for Android, powered by Claude. It runs on the phone only, with no backend
 server. You bring your own Anthropic API key.
 
-> **Status: Phase 2 (local data).** You can chat with Claude by text, with streamed replies, and ask about your
+> **Status: Phase 3 (security).** You can chat with Claude by text, with streamed replies, and ask about your
 > INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server. Chats are saved and searchable on the
-> phone, recent portfolio data is reused with a "last updated" label, and there's an audit log. There's no voice,
+> phone, recent portfolio data is reused with a "last updated" label, there's an audit log, and sensitive
+> answers need your JARVIS PIN or fingerprint. There's no voice,
 > wake word or riding mode yet. See [PROGRESS.md](PROGRESS.md) and the phase plan in [CLAUDE.md](CLAUDE.md).
 
 ## Features in this build
@@ -27,7 +28,13 @@ server. You bring your own Anthropic API key.
 - Chat history on the phone: searchable, deletable one by one or all at once.
 - Saved portfolio data: reused for 15 minutes (configurable) to save a connector call, always labelled
   "updated 10:42" or "saved data from 10:30". Say "refresh" to fetch it live.
-- Audit log of requests, tool calls and sign-in events (no message content), kept 180 days.
+- Audit log of requests, tool calls, sign-in and security events (no message content), kept 180 days.
+- Security:
+  - sensitive answers (net worth, holdings) ask "PIN or fingerprint?"
+  - fingerprint answers are shown on screen only
+  - 3 wrong PINs lock the PIN until a fingerprint unlocks it
+  - short sessions that end when the screen turns off or you type "lock"
+  - per-tool Allow / Ask / Deny
 
 ## Setup
 1. Install the app: see [docs/install.md](docs/install.md).
@@ -39,8 +46,10 @@ server. You bring your own Anthropic API key.
 | Permission | Why |
 |---|---|
 | Internet | To call the Anthropic API and connector sign-in/refresh endpoints. |
+| Notifications (Android 13+, optional) | Only to alert you if your JARVIS PIN gets locked. Asked when you set a PIN. |
+| Biometrics (no permission prompt) | Fingerprint or screen lock for sensitive answers, through Android's own prompt. |
 
-That's all for Phase 1. Microphone, notifications, SMS and the others arrive with the features that need them,
+Microphone, notifications, SMS and the others arrive with the features that need them,
 each with an in-app explanation.
 
 ## Privacy and security

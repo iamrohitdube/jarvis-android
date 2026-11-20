@@ -21,6 +21,10 @@ import dev.jarvis.data.AuditEvent
 import dev.jarvis.data.AuditSink
 import dev.jarvis.data.SnapshotStore
 import dev.jarvis.data.db.SnapshotEntity
+import dev.jarvis.security.AccessController
+import dev.jarvis.security.AccessResult
+import dev.jarvis.security.AuthMethodParser
+import dev.jarvis.security.DenyReason
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +45,7 @@ sealed interface AgentError {
     data class Network(val detail: String) : AgentError
     data class Refused(val category: String?) : AgentError
     data class BudgetReached(val budgetUsd: Double) : AgentError
+    data class AccessDenied(val reason: DenyReason, val toolNames: List<String>) : AgentError
     data class Other(val detail: String) : AgentError
 }
 
@@ -56,6 +61,10 @@ sealed interface AgentEvent {
         val model: String? = null,
         /** Connector data the reply used, with fetch times, for the "last updated" label. */
         val dataStamps: List<DataStamp> = emptyList(),
+        /** Contains Tier 2 data: hide at rest until unlocked. */
+        val sensitive: Boolean = false,
+        /** Authorised by fingerprint/device credential: show, don't speak. */
+        val screenOnly: Boolean = false,
     ) : AgentEvent
     data class Failed(val error: AgentError, val partialText: String) : AgentEvent
 }
@@ -69,6 +78,8 @@ class AgentLoop(
     private val llm: LlmClient,
     private val connectors: Map<String, Connector>,
     private val usageMeter: UsageMeter,
+    /** Security gate (policy + PIN/fingerprint). Required: there is no unguarded default. */
+    private val access: AccessController,
     private val clock: () -> Long = System::currentTimeMillis,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val snapshots: SnapshotStore? = null,
@@ -84,11 +95,31 @@ class AgentLoop(
                 return@flow
             }
         }
-        var route = ToolRouter.route(userText, settings)
+        // "net worth, fingerprint": the method word picks the auth path and is not sent to the model.
+        val (question, preferredMethod) = AuthMethodParser.extract(userText)
+        var route = ToolRouter.route(question, settings)
+
+        // Security gate: policy + auth before any tool or saved tool data is used (CLAUDE.md section 6).
+        var sensitive = false
+        var screenOnly = false
+        if (route.tools.isNotEmpty()) {
+            when (val decision = access.authorize(route.tools, preferredMethod)) {
+                is AccessResult.Granted -> {
+                    route = route.copy(tools = decision.tools, groups = decision.tools.map { it.group }.toSet())
+                    sensitive = decision.sensitive
+                    screenOnly = decision.screenOnly
+                }
+                is AccessResult.Denied -> {
+                    auditRequest("denied:" + decision.reason.name.lowercase(), route, null)
+                    emit(AgentEvent.Failed(AgentError.AccessDenied(decision.reason, decision.toolNames), ""))
+                    return@flow
+                }
+            }
+        }
 
         // Reuse fresh snapshots instead of calling the connector (saves the MCP round-trip tokens).
         var cached: List<SnapshotEntity> = emptyList()
-        if (snapshots != null && route.tools.isNotEmpty() && !ToolRouter.wantsFresh(userText)) {
+        if (snapshots != null && route.tools.isNotEmpty() && !ToolRouter.wantsFresh(question)) {
             snapshots.freshFor(route.tools, settings.snapshotMaxAgeMinutes * 60_000L)?.let { fresh ->
                 cached = fresh
                 route = route.copy(groups = emptySet(), tools = emptyList())
@@ -125,7 +156,7 @@ class AgentLoop(
 
         try {
             while (true) {
-                val request = PromptBuilder.build(route, trimmedHistory, userText, servers, settings.serverFallback, paused, cachedData)
+                val request = PromptBuilder.build(route, trimmedHistory, question, servers, settings.serverFallback, paused, cachedData)
                 var message: AssembledMessage? = null
                 try {
                     llm.stream(request).collect { ev ->
@@ -181,6 +212,8 @@ class AgentLoop(
                                 truncated = truncated,
                                 model = model,
                                 dataStamps = stamps,
+                                sensitive = sensitive,
+                                screenOnly = screenOnly,
                             )
                         )
                     }

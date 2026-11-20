@@ -3,7 +3,11 @@ package dev.jarvis
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import dev.jarvis.agent.AuthTier
 import dev.jarvis.claude.UsageMeter
+import dev.jarvis.security.AccessController
+import dev.jarvis.security.AccessResult
+import dev.jarvis.security.requiredTier
 import dev.jarvis.data.db.JarvisDatabase
 import kotlinx.coroutines.Dispatchers
 import dev.jarvis.security.SecretKey
@@ -38,6 +42,11 @@ fun tempUsageMeter(db: JarvisDatabase = testDb()): UsageMeter = UsageMeter(db.us
 /** A file-backed DataStore in a fresh temp dir (one per test: Windows can't rename over an open file). */
 fun tempDataStore(scope: CoroutineScope) = PreferenceDataStoreFactory.createWithPath(scope = scope) {
     File(Files.createTempDirectory("ds").toFile(), "test.preferences_pb").toOkioPath()
+}
+
+/** Test-only gate that grants every tool (the app has no such shortcut; it always uses AuthCoordinator). */
+val allowAll = AccessController { tools, _ ->
+    AccessResult.Granted(tools, method = null, screenOnly = false, sensitive = tools.requiredTier() >= AuthTier.SENSITIVE)
 }
 
 /** Builds an SSE body from (event, json) pairs. */

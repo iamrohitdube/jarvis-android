@@ -32,10 +32,13 @@ class HistoryStore(
         costUsd: Double? = null,
         dataSources: List<DataStamp> = emptyList(),
         failed: Boolean = false,
+        sensitive: Boolean = false,
+        screenOnly: Boolean = false,
     ): Long = insert(
         MessageEntity(
             conversationId = conversationId, role = ASSISTANT, text = text, createdAt = clock(),
             model = model, costUsd = costUsd, dataSources = DataStamp.encode(dataSources), failed = failed,
+            sensitive = sensitive, screenOnly = screenOnly,
         )
     )
 
