@@ -73,6 +73,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.androidx.biometric)
+    implementation(libs.androidx.splashscreen)
     implementation(libs.room.runtime)
     ksp(libs.room.compiler)
 

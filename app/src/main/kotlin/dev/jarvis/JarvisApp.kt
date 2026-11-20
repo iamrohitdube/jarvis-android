@@ -39,7 +39,7 @@ class JarvisApp : Application() {
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> appScope.launch { auth.lock("screen_off") }
+                Intent.ACTION_SCREEN_OFF -> appScope.launch { auth.lock(AuthCoordinator.SCREEN_OFF) }
                 Intent.ACTION_USER_PRESENT -> sessions.grant(AuthTier.PERSONAL, AuthMethod.DEVICE_UNLOCK)
             }
         }

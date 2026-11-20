@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="jarvis_navy">#FF0A0E17</color>
+    <color name="jarvis_light_bg">#FFF6F7FB</color>
+
+    <!-- Base window theme; Compose draws everything else. Light variant here, dark in values-night. -->
+    <style name="Theme.Jarvis" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/jarvis_light_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- Launch screen (androidx core-splashscreen): navy background with the animated orb. -->
+    <style name="Theme.Jarvis.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/jarvis_navy</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_animated</item>
+        <item name="windowSplashScreenAnimationDuration">1000</item>
+        <item name="postSplashScreenTheme">@style/Theme.Jarvis</item>
+    </style>
+</resources>

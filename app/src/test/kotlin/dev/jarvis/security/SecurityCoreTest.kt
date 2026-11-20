@@ -167,6 +167,14 @@ class SessionManagerTest {
         assertFalse(sessions.isValid(AuthTier.PERSONAL, policy))
     }
 
+    @Test fun revealedMessagesOutliveTheSession() {
+        sessions.reveal(listOf(1L, 2L))
+        sessions.lock() // e.g. screen off
+        assertEquals(setOf(1L, 2L), sessions.revealed.value)
+        sessions.forgetReveals()
+        assertTrue(sessions.revealed.value.isEmpty())
+    }
+
     @Test fun clockGoingBackwardsDoesNotExtendASession() {
         now = 10_000
         sessions.grant(AuthTier.SENSITIVE, AuthMethod.PIN)

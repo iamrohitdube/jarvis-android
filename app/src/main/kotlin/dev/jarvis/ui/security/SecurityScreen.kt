@@ -9,9 +9,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.clearText
@@ -19,15 +25,22 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -41,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -63,14 +77,20 @@ import dev.jarvis.security.PinChangeResult
 import dev.jarvis.security.PolicyLevel
 import dev.jarvis.security.StrongAuthProof
 import dev.jarvis.security.ToolRule
-import dev.jarvis.ui.settings.Hint
-import dev.jarvis.ui.settings.SectionCard
+import dev.jarvis.ui.components.ChipTone
+import dev.jarvis.ui.components.Hint
+import dev.jarvis.ui.components.IconTile
+import dev.jarvis.ui.components.SaveButton
+import dev.jarvis.ui.components.SettingsCard
+import dev.jarvis.ui.components.StatusChip
+import dev.jarvis.ui.components.StatusMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import dev.jarvis.ui.icons.AppIcons
 
 @HiltViewModel
 class SecurityViewModel @Inject constructor(
@@ -85,8 +105,13 @@ class SecurityViewModel @Inject constructor(
     val pinLocked = MutableStateFlow(false)
     val bioStatus = MutableStateFlow(BiometricStatus.NONE)
     val deviceSecure = MutableStateFlow(false)
+    /** Status line under the PIN card. */
     val message = MutableStateFlow<String?>(null)
     val pinDialogOpen = MutableStateFlow(false)
+    /** Error shown inside the PIN dialog (the dialog stays open so the user can fix it). */
+    val pinDialogError = MutableStateFlow<String?>(null)
+    /** True while the (deliberately slow) PIN hash is computed; the dialog shows a spinner. */
+    val savingPin = MutableStateFlow(false)
 
     /** Held only while the PIN dialog is open; dropped as soon as it closes. */
     private var proof: StrongAuthProof? = null
@@ -107,28 +132,38 @@ class SecurityViewModel @Inject constructor(
             }
         }
         message.value = null
+        pinDialogError.value = null
         pinDialogOpen.value = true
     }
 
-    fun savePin(newPin: String, confirm: String) = viewModelScope.launch {
-        val wasSet = pin.hasPin()
-        when (pin.setPin(newPin, confirm, proof, bio.deviceSecure())) {
-            PinChangeResult.Ok -> {
-                closePinDialog()
-                audit.record(AuditEvent(AuditCategory.AUTH, if (wasSet) "pin_changed" else "pin_set", "ok", method = "pin"))
-                repo.setStep(OnboardingStep.SECURITY, StepStatus.DONE)
-                message.value = "PIN saved. Only a salted hash is stored."
-                refresh()
+    /** Saves the PIN; on success the dialog closes by itself. */
+    fun savePin(newPin: String, confirm: String, onSaved: () -> Unit) = viewModelScope.launch {
+        if (savingPin.value) return@launch
+        savingPin.value = true
+        try {
+            val wasSet = pin.hasPin()
+            when (pin.setPin(newPin, confirm, proof, bio.deviceSecure())) {
+                PinChangeResult.Ok -> {
+                    onSaved()
+                    closePinDialog()
+                    audit.record(AuditEvent(AuditCategory.AUTH, if (wasSet) "pin_changed" else "pin_set", "ok", method = "pin"))
+                    repo.setStep(OnboardingStep.SECURITY, StepStatus.DONE)
+                    message.value = if (wasSet) "PIN changed." else "PIN set. Only a salted hash is stored."
+                    refresh()
+                }
+                PinChangeResult.Malformed -> pinDialogError.value = "A PIN is 4 to 8 digits."
+                PinChangeResult.TooWeak -> pinDialogError.value = "Too easy to guess (like 1111 or 1234). Pick another."
+                PinChangeResult.Mismatch -> pinDialogError.value = "The two PINs don't match."
+                PinChangeResult.NeedsStrongAuth -> { closePinDialog(); message.value = "Confirm with fingerprint first." }
             }
-            PinChangeResult.Malformed -> message.value = "A PIN is 4 to 8 digits."
-            PinChangeResult.TooWeak -> message.value = "Too easy to guess (like 1111 or 1234). Pick another."
-            PinChangeResult.Mismatch -> message.value = "The two PINs don't match."
-            PinChangeResult.NeedsStrongAuth -> { closePinDialog(); message.value = "Confirm with fingerprint first." }
+        } finally {
+            savingPin.value = false
         }
     }
 
     fun closePinDialog() {
         proof = null
+        pinDialogError.value = null
         pinDialogOpen.value = false
     }
 
@@ -158,7 +193,6 @@ class SecurityViewModel @Inject constructor(
         val p = personal.trim().toIntOrNull(); val s = sensitive.trim().toIntOrNull()
         if (p == null || s == null) { message.value = "Enter minutes as whole numbers."; return@launch }
         repo.setSessionMinutes(p, s)
-        message.value = "Session lengths saved."
     }
 
     fun lockNow() = viewModelScope.launch {
@@ -169,15 +203,20 @@ class SecurityViewModel @Inject constructor(
     fun skipOnboardingStep() = viewModelScope.launch { repo.setStep(OnboardingStep.SECURITY, StepStatus.SKIPPED) }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SecurityScreen(onBack: () -> Unit, vm: SecurityViewModel = hiltViewModel()) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Security") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Security") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(AppIcons.ArrowBack, "Back") } },
+            )
+        },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PinSection(vm)
             val s by vm.settings.collectAsStateWithLifecycle()
@@ -185,6 +224,7 @@ fun SecurityScreen(onBack: () -> Unit, vm: SecurityViewModel = hiltViewModel()) 
                 SessionsSection(vm, it)
                 PolicySection(vm, it)
             }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -203,68 +243,96 @@ fun PinSection(vm: SecurityViewModel) {
 
     LaunchedEffect(Unit) { vm.refresh() }
 
-    SectionCard("PIN and fingerprint") {
-        Hint("Sensitive answers (like your net worth) ask \"PIN or fingerprint?\" each time. Fingerprint shows the answer on screen only.")
-        Text(
-            "JARVIS PIN: " + when {
-                !pinSet -> "not set"
-                locked -> "LOCKED after 3 wrong tries. Unlock it with your fingerprint."
-                else -> "set"
-            },
-            color = if (locked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            "Fingerprint: " + when (bio) {
-                BiometricStatus.AVAILABLE -> "ready"
-                BiometricStatus.CREDENTIAL_ONLY -> "not enrolled; your phone's screen lock will be used"
-                BiometricStatus.NONE -> "not available"
+    SettingsCard(
+        "PIN and fingerprint", AppIcons.Lock,
+        subtitle = "Sensitive answers ask \"PIN or fingerprint?\"",
+        tint = MaterialTheme.colorScheme.tertiary,
+    ) {
+        StatusRow(AppIcons.Password, "JARVIS PIN") {
+            when {
+                !pinSet -> StatusChip("Not set", ChipTone.WARN)
+                locked -> StatusChip("Locked", ChipTone.BAD)
+                else -> StatusChip("Set", ChipTone.GOOD)
             }
-        )
+        }
+        StatusRow(AppIcons.Fingerprint, "Fingerprint") {
+            when (bio) {
+                BiometricStatus.AVAILABLE -> StatusChip("Ready", ChipTone.GOOD)
+                BiometricStatus.CREDENTIAL_ONLY -> StatusChip("Screen lock", ChipTone.BRAND)
+                BiometricStatus.NONE -> StatusChip("Unavailable", ChipTone.BAD)
+            }
+        }
+        if (locked) Hint("3 wrong PINs. Unlock it with your fingerprint the next time JARVIS asks.")
         if (!secure) Hint("This phone has no screen lock, so anyone holding it could change your JARVIS PIN. Set a screen lock in Android settings.")
+        Hint("Fingerprint answers are shown on screen only, never spoken.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 vm.beginSetPin()
             }) { Text(if (pinSet) "Change PIN" else "Set PIN") }
             if (pinSet) OutlinedButton(onClick = vm::removePin) { Text("Remove") }
+            FilledTonalButton(onClick = vm::lockNow) { Text("Lock now") }
         }
         if (bio != BiometricStatus.AVAILABLE) {
-            OutlinedButton(onClick = {
+            TextButton(onClick = {
                 val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Intent(Settings.ACTION_BIOMETRIC_ENROLL)
                 else Intent(Settings.ACTION_SECURITY_SETTINGS)
                 runCatching { context.startActivity(intent) }
             }) { Text("Set up fingerprint") }
         }
-        OutlinedButton(onClick = vm::lockNow) { Text("Lock now") }
-        message?.let { Hint(it) }
+        StatusMessage(message)
     }
     if (dialog) NewPinDialog(vm)
+}
+
+@Composable
+private fun StatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, chip: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        chip()
+    }
 }
 
 @Composable
 private fun NewPinDialog(vm: SecurityViewModel) {
     val first = rememberTextFieldState()
     val second = rememberTextFieldState()
-    val message by vm.message.collectAsStateWithLifecycle()
+    val error by vm.pinDialogError.collectAsStateWithLifecycle()
+    val saving by vm.savingPin.collectAsStateWithLifecycle()
     val close = { first.clearText(); second.clearText(); vm.closePinDialog() }
     AlertDialog(
-        onDismissRequest = close,
-        title = { Text("New JARVIS PIN") },
+        onDismissRequest = { if (!saving) close() },
+        icon = { IconTile(AppIcons.Password, MaterialTheme.colorScheme.tertiary, size = 48) },
+        title = { Text("New JARVIS PIN", textAlign = TextAlign.Center) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Hint("4 to 8 digits. Not the same as your phone's screen-lock PIN, ideally.")
-                OutlinedSecureTextField(first, label = { Text("PIN") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth())
-                OutlinedSecureTextField(second, label = { Text("Confirm PIN") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth())
-                message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Hint("4 to 8 digits. Ideally not your phone's screen-lock PIN.")
+                OutlinedSecureTextField(
+                    first, label = { Text("PIN") }, enabled = !saving, shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedSecureTextField(
+                    second, label = { Text("Confirm PIN") }, enabled = !saving, shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth(),
+                )
+                StatusMessage(error, error = true)
             }
         },
         confirmButton = {
-            Button(onClick = {
-                vm.savePin(first.text.toString(), second.text.toString())
-                first.clearText(); second.clearText()
-            }) { Text("Save") }
+            Button(
+                onClick = { vm.savePin(first.text.toString(), second.text.toString()) { first.clearText(); second.clearText() } },
+                enabled = !saving,
+            ) {
+                if (saving) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Saving…")
+                } else Text("Save")
+            }
         },
-        dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = close, enabled = !saving) { Text("Cancel") } },
     )
 }
 
@@ -272,26 +340,39 @@ private fun NewPinDialog(vm: SecurityViewModel) {
 private fun SessionsSection(vm: SecurityViewModel, s: AppSettings) {
     var personal by remember(s.personalSessionMinutes) { mutableStateOf(s.personalSessionMinutes.toString()) }
     var sensitive by remember(s.sensitiveSessionMinutes) { mutableStateOf(s.sensitiveSessionMinutes.toString()) }
-    SectionCard("Sessions") {
-        Hint("After you confirm, JARVIS won't ask again for this long. Sessions also end when the screen turns off or you say \"lock\".")
-        OutlinedTextField(sensitive, { sensitive = it }, label = { Text("Sensitive (finance), minutes, 1-10") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(personal, { personal = it }, label = { Text("Personal, minutes, 1-30") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-        OutlinedButton(onClick = { vm.setSessions(personal, sensitive) }) { Text("Save") }
+    SettingsCard("Sessions", AppIcons.Timer, subtitle = "How long JARVIS waits before asking again") {
+        Hint("Sessions also end when the screen turns off or you say \"lock\".")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(sensitive, { sensitive = it }, label = { Text("Sensitive (1-10 min)") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f))
+            OutlinedTextField(personal, { personal = it }, label = { Text("Personal (1-30 min)") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f))
+        }
+        SaveButton { vm.setSessions(personal, sensitive) }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PolicySection(vm: SecurityViewModel, s: AppSettings) {
-    SectionCard("Tool permissions") {
-        Hint("Strict: ask before anything except public info. Smart (recommended): ask for sensitive data and any action. Auto: tools you set to Allow run without asking.")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PolicyLevel.entries.forEach { level ->
-                FilterChip(selected = s.policyLevel == level, onClick = { vm.setLevel(level) },
-                    label = { Text(level.name.lowercase().replaceFirstChar { it.uppercase() }) })
+    SettingsCard("Tool permissions", AppIcons.Tune, subtitle = "When JARVIS must ask before using a tool") {
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            PolicyLevel.entries.forEachIndexed { i, level ->
+                SegmentedButton(
+                    selected = s.policyLevel == level,
+                    onClick = { vm.setLevel(level) },
+                    shape = SegmentedButtonDefaults.itemShape(i, PolicyLevel.entries.size),
+                ) { Text(level.name.lowercase().replaceFirstChar { it.uppercase() }) }
             }
         }
+        Hint(
+            when (s.policyLevel) {
+                PolicyLevel.STRICT -> "Asks before anything except public info."
+                PolicyLevel.SMART -> "Recommended. Asks for sensitive data and any action."
+                PolicyLevel.AUTO -> "Tools you set to Allow run without asking."
+            }
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         ToolRegistry.all.filterNot { it.helper }.forEach { tool ->
             ToolRuleRow(tool.description, tool.tier.name.lowercase(), s.toolRules[tool.name] ?: ToolRule.DEFAULT) { vm.setRule(tool.name, it) }
         }
@@ -306,10 +387,21 @@ private fun ToolRuleRow(label: String, tier: String, rule: ToolRule, onChange: (
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text(tier, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        TextButton(onClick = { open = true }) { Text(rule.label()) }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            ToolRule.entries.forEach { r ->
-                DropdownMenuItem(text = { Text(r.label()) }, onClick = { open = false; onChange(r) })
+        androidx.compose.foundation.layout.Box {
+            TextButton(onClick = { open = true }) {
+                Text(
+                    rule.label(),
+                    color = when (rule) {
+                        ToolRule.DENY -> MaterialTheme.colorScheme.error
+                        ToolRule.ALLOW -> dev.jarvis.ui.theme.Brand.Success
+                        else -> MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                ToolRule.entries.forEach { r ->
+                    DropdownMenuItem(text = { Text(r.label()) }, onClick = { open = false; onChange(r) })
+                }
             }
         }
     }
