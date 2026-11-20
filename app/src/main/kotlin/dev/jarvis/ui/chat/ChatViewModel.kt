@@ -8,7 +8,16 @@ import dev.jarvis.agent.AgentLoop
 import dev.jarvis.agent.DataStamp
 import dev.jarvis.agent.AuthTier
 import dev.jarvis.agent.ToolRegistry
+import dev.jarvis.security.AndroidBiometricAvailability
 import dev.jarvis.security.AuthCoordinator
+import dev.jarvis.security.AuthMethod
+import dev.jarvis.security.AuthPrompt
+import dev.jarvis.voice.SpokenChoice
+import dev.jarvis.voice.Stt
+import dev.jarvis.voice.SttError
+import dev.jarvis.voice.Tts
+import dev.jarvis.voice.VoiceSession
+import dev.jarvis.voice.VoiceState
 import dev.jarvis.security.SessionManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -75,8 +84,23 @@ class ChatViewModel @Inject constructor(
     private val current: CurrentConversation,
     private val auth: AuthCoordinator,
     private val sessions: SessionManager,
+    stt: Stt,
+    private val tts: Tts,
+    private val device: AndroidBiometricAvailability,
     usageMeter: UsageMeter,
 ) : ViewModel() {
+
+    /** Push-to-talk pipeline: mic -> STT -> agent -> sentence-by-sentence TTS (CLAUDE.md section 8). */
+    private val voice = VoiceSession(stt, tts, viewModelScope, deviceLocked = { device.deviceLocked() })
+    val voiceState: StateFlow<VoiceState> = voice.state
+    val voicePartial: StateFlow<String> = voice.partial
+    val voiceLevel: StateFlow<Float> = voice.level
+    val voiceError: StateFlow<SttError?> = voice.error
+    val sttAvailable: Boolean = stt.isAvailable()
+
+    /** Quiet mode = not speaking replies (screen only). */
+    val quiet: StateFlow<Boolean> = settings.settings.map { !it.speakReplies }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** Whether a sensitive session is active; re-checked every few seconds because sessions expire by time. */
     private val unlocked: Flow<Boolean> = combine(sessions.sessions, ticker(), settings.settings) { _, _, s ->
@@ -104,6 +128,33 @@ class ChatViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BudgetLevel.NONE)
 
     init {
+        // Voice preferences follow Settings.
+        viewModelScope.launch {
+            settings.settings.collect { s ->
+                voice.speakReplies = s.speakReplies
+                voice.preferOnDevice = s.preferOnDeviceStt
+                tts.setRate(s.speechRate)
+            }
+        }
+        // In a voice turn, ask "PIN or fingerprint?" out loud and take a spoken answer.
+        viewModelScope.launch {
+            var askedFor = -1L
+            auth.prompt.collect { p ->
+                if (p?.stage == AuthPrompt.Stage.CHOOSE && p.id != askedFor && voice.voiceTurn) {
+                    askedFor = p.id
+                    voice.ask(VoiceSession.CHOICE_QUESTION) { answer ->
+                        when (SpokenChoice.parse(answer)) {
+                            SpokenChoice.Choice.PIN -> auth.choose(AuthMethod.PIN)
+                            SpokenChoice.Choice.FINGERPRINT -> auth.choose(AuthMethod.BIOMETRIC)
+                            null -> Unit // unclear: the 6 s default (fingerprint) applies
+                        }
+                    }
+                } else if (p?.stage != AuthPrompt.Stage.CHOOSE && voice.state.value == VoiceState.LISTENING && askedFor != -1L) {
+                    voice.cancelListening() // answered by tap, or moved on
+                    askedFor = -1L
+                }
+            }
+        }
         // Whatever is visible while unlocked stays revealed afterwards (until an explicit "lock").
         viewModelScope.launch {
             combine(persisted, unlocked) { a, b -> a to b }.collect { (rows, open) ->
@@ -112,10 +163,39 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun send(raw: String) {
+    /**
+     * Mic button: tap to talk; tap again to finish; tap while JARVIS is talking or thinking to interrupt
+     * (barge-in) and talk again.
+     */
+    fun micTapped() {
+        when (voice.state.value) {
+            VoiceState.LISTENING -> voice.finishListening()
+            else -> {
+                if (busy.value) stop()
+                voice.bargeIn()
+                voice.startListening { heard -> send(heard, viaVoice = true) }
+            }
+        }
+    }
+
+    fun cancelListening() = voice.cancelListening()
+
+    /** Tap on the speaking indicator: stop talking (the reply stays on screen). */
+    fun stopSpeaking() = voice.bargeIn()
+
+    fun dismissVoiceError() = voice.clearError()
+
+    fun toggleQuiet() = viewModelScope.launch {
+        val nowQuiet = !quiet.value
+        settings.setSpeakReplies(!nowQuiet)
+        if (nowQuiet) voice.bargeIn()
+    }
+
+    fun send(raw: String, viaVoice: Boolean = false) {
         val text = raw.trim()
         if (text.isEmpty() || busy.value) return
-        if (isLockCommand(text)) { lockNow(); return }
+        if (isLockCommand(text)) { lockNow(); if (viaVoice && !quiet.value) tts.speak("Locked."); return }
+        voice.beginTurn(viaVoice)
         lastUserText = text
         busy.value = true
         lastError.value = null
@@ -131,8 +211,12 @@ class ChatViewModel @Inject constructor(
                 agent.run(context, text, settings.current()).collect { ev ->
                     when (ev) {
                         is AgentEvent.Routed -> live.update { it?.copy(status = routeLabel(ev)) }
+                        is AgentEvent.Authorized -> voice.onAuthorized(ev.screenOnly, ev.sensitive)
                         is AgentEvent.ToolActivity -> live.update { it?.copy(status = toolLabel(ev.toolName)) }
-                        is AgentEvent.TextDelta -> live.update { it?.copy(text = it.text + ev.text) }
+                        is AgentEvent.TextDelta -> {
+                            live.update { it?.copy(text = it.text + ev.text) }
+                            voice.onTextDelta(ev.text)
+                        }
                         is AgentEvent.Finished -> {
                             val body = if (ev.truncated) ev.text + "\n\n(Cut off at the length limit. Say \"continue\" for more.)" else ev.text
                             history.addAssistantMessage(
@@ -141,12 +225,14 @@ class ChatViewModel @Inject constructor(
                             )
                             finished = true
                             live.value = null
+                            voice.onFinished()
                         }
                         is AgentEvent.Failed -> {
                             val msgId = history.addAssistantMessage(id, ev.partialText, failed = true)
                             lastError.value = msgId to ev.error.toUi()
                             finished = true
                             live.value = null
+                            voice.onFailed()
                         }
                     }
                 }
@@ -166,6 +252,7 @@ class ChatViewModel @Inject constructor(
     fun retry() { lastUserText?.let(::send) }
 
     fun stop() {
+        voice.bargeIn()
         job?.cancel()
         job = null
     }

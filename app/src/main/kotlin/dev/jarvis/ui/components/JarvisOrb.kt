@@ -4,6 +4,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -23,15 +24,20 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.jarvis.ui.theme.Brand
 
-enum class OrbState { IDLE, THINKING, LOCKED }
+enum class OrbState { IDLE, THINKING, LISTENING, SPEAKING, LOCKED }
 
 /**
  * The JARVIS orb: a glowing core inside a rotating gradient ring, with an orbiting arc.
  * Idle = slow breathing; thinking = faster spin and pulse; locked = calm and dimmed.
  */
 @Composable
-fun JarvisOrb(size: Dp, modifier: Modifier = Modifier, state: OrbState = OrbState.IDLE) {
-    val fast = state == OrbState.THINKING
+fun JarvisOrb(size: Dp, modifier: Modifier = Modifier, state: OrbState = OrbState.IDLE, level: Float = 0f) {
+    val fast = state == OrbState.THINKING || state == OrbState.SPEAKING
+    // Listening: the orb swells with the voice level.
+    val voiceScale by animateFloatAsState(
+        if (state == OrbState.LISTENING) 0.9f + 0.22f * level.coerceIn(0f, 1f) else 1f,
+        tween(90), label = "voice",
+    )
     val t = rememberInfiniteTransition(label = "orb")
     val spin by t.animateFloat(
         0f, 360f,
@@ -48,7 +54,7 @@ fun JarvisOrb(size: Dp, modifier: Modifier = Modifier, state: OrbState = OrbStat
     val dim = if (state == OrbState.LOCKED) 0.55f else 1f
 
     Canvas(modifier.size(size)) {
-        val r = this.size.minDimension / 2f
+        val r = this.size.minDimension / 2f * voiceScale
         val c = center
 
         // Soft outer glow

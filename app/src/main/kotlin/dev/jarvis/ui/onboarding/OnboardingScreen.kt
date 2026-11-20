@@ -1,6 +1,14 @@
 package dev.jarvis.ui.onboarding
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -123,7 +131,11 @@ fun OnboardingScreen(
                     onToggle = { expanded = if (expanded == OnboardingStep.ANTHROPIC_KEY) null else OnboardingStep.ANTHROPIC_KEY }) {
                     ApiKeySection(vm, onKeyOk = { vm.setStep(OnboardingStep.ANTHROPIC_KEY, StepStatus.DONE) })
                 }
-                StepCard(2, OnboardingStep.SECURITY, "Protect sensitive answers", steps.getValue(OnboardingStep.SECURITY), expanded == OnboardingStep.SECURITY,
+                StepCard(2, OnboardingStep.VOICE, "Talk to JARVIS", steps.getValue(OnboardingStep.VOICE), expanded == OnboardingStep.VOICE,
+                    onToggle = { expanded = if (expanded == OnboardingStep.VOICE) null else OnboardingStep.VOICE }) {
+                    VoiceStep(vm, done = steps.getValue(OnboardingStep.VOICE) != StepStatus.TODO)
+                }
+                StepCard(3, OnboardingStep.SECURITY, "Protect sensitive answers", steps.getValue(OnboardingStep.SECURITY), expanded == OnboardingStep.SECURITY,
                     onToggle = { expanded = if (expanded == OnboardingStep.SECURITY) null else OnboardingStep.SECURITY }) {
                     Hint("Set a JARVIS PIN for things like your net worth. Fingerprint works too, and is used if you skip this.")
                     PinSection(securityVm)
@@ -131,7 +143,7 @@ fun OnboardingScreen(
                         TextButton(onClick = { securityVm.skipOnboardingStep() }) { Text("Skip, use fingerprint only") }
                     }
                 }
-                StepCard(3, OnboardingStep.CONNECTORS, "Connect your accounts", steps.getValue(OnboardingStep.CONNECTORS), expanded == OnboardingStep.CONNECTORS,
+                StepCard(4, OnboardingStep.CONNECTORS, "Connect your accounts", steps.getValue(OnboardingStep.CONNECTORS), expanded == OnboardingStep.CONNECTORS,
                     onToggle = { expanded = if (expanded == OnboardingStep.CONNECTORS) null else OnboardingStep.CONNECTORS }) {
                     Hint("Sign in, then tap Test. Optional: you can connect later in Settings.")
                     ConnectorsSection(vm, onConnectorOk = { vm.setStep(OnboardingStep.CONNECTORS, StepStatus.DONE) })
@@ -143,6 +155,28 @@ fun OnboardingScreen(
             }
         }
     }
+}
+
+/** Step 2: microphone permission and a voice test. Marked done once the mic is allowed. */
+@Composable
+private fun VoiceStep(vm: SettingsViewModel, done: Boolean) {
+    val context = LocalContext.current
+    var granted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+    }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        granted = ok
+        if (ok) vm.setStep(OnboardingStep.VOICE, StepStatus.DONE)
+    }
+    LaunchedEffect(granted) { if (granted && !done) vm.setStep(OnboardingStep.VOICE, StepStatus.DONE) }
+    Hint("Tap the mic in chat and just talk. JARVIS answers out loud, sentence by sentence. The mic is used only after you tap it.")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = { launcher.launch(Manifest.permission.RECORD_AUDIO) }, enabled = !granted) {
+            Text(if (granted) "Microphone allowed" else "Allow microphone")
+        }
+        OutlinedButton(onClick = vm::testVoice) { Text("Test voice") }
+    }
+    if (!done) TextButton(onClick = { vm.setStep(OnboardingStep.VOICE, StepStatus.SKIPPED) }) { Text("Skip, I'll type") }
 }
 
 @Composable

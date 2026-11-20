@@ -1,6 +1,21 @@
 package dev.jarvis.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.core.content.ContextCompat
+import dev.jarvis.ui.components.IconTile
+import dev.jarvis.voice.SttError
+import dev.jarvis.voice.VoiceState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -78,6 +93,7 @@ import dev.jarvis.ui.components.BrandGlow
 import dev.jarvis.ui.components.ChipTone
 import dev.jarvis.ui.components.JarvisOrb
 import dev.jarvis.ui.components.OrbAvatar
+import dev.jarvis.ui.components.OrbState
 import dev.jarvis.ui.components.StatusChip
 import dev.jarvis.ui.components.TypingDots
 import dev.jarvis.ui.theme.Brand
@@ -85,6 +101,8 @@ import dev.jarvis.ui.theme.withBrandGradient
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 import dev.jarvis.ui.icons.AppIcons
+
+private val MicPermission = Manifest.permission.RECORD_AUDIO
 
 private val Suggestions = listOf(
     "What's my net worth?",
@@ -108,6 +126,20 @@ fun ChatScreen(
     val recent by vm.recent.collectAsStateWithLifecycle()
     val currentId by vm.currentId.collectAsStateWithLifecycle()
     val model by vm.modelLabel.collectAsStateWithLifecycle()
+    val voiceState by vm.voiceState.collectAsStateWithLifecycle()
+    val partial by vm.voicePartial.collectAsStateWithLifecycle()
+    val level by vm.voiceLevel.collectAsStateWithLifecycle()
+    val voiceError by vm.voiceError.collectAsStateWithLifecycle()
+    val quiet by vm.quiet.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var micRationale by remember { mutableStateOf(false) }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) vm.micTapped()
+    }
+    val onMic = {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (granted) vm.micTapped() else micRationale = true
+    }
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -117,6 +149,10 @@ fun ChatScreen(
 
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text?.length) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
+    }
+
+    if (micRationale) {
+        MicRationaleDialog(onAllow = { micPermission.launch(MicPermission) }, onDismiss = { micRationale = false })
     }
 
     ModalNavigationDrawer(
@@ -149,7 +185,12 @@ fun ChatScreen(
                             if (model.isNotEmpty()) Text(model, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     },
-                    actions = { IconButton(onClick = vm::newChat) { Icon(AppIcons.Add, "New chat") } },
+                    actions = {
+                        IconButton(onClick = { vm.toggleQuiet() }) {
+                            Icon(if (quiet) AppIcons.VolumeOff else AppIcons.VolumeUp, if (quiet) "Quiet mode on: replies on screen only" else "Spoken replies on")
+                        }
+                        IconButton(onClick = vm::newChat) { Icon(AppIcons.Add, "New chat") }
+                    },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 )
             },
@@ -161,7 +202,7 @@ fun ChatScreen(
                         BudgetBanner(exceeded = budget == BudgetLevel.EXCEEDED, onClick = onOpenUsage)
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        if (state.messages.isEmpty()) {
+                        if (state.messages.isEmpty() && voiceState != VoiceState.LISTENING) {
                             EmptyState(onSuggestion = { vm.send(it) })
                         } else {
                             LazyColumn(
@@ -189,12 +230,103 @@ fun ChatScreen(
                             }
                         }
                     }
+                    AnimatedVisibility(voiceError != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                        VoiceErrorLine(voiceError, onDismiss = vm::dismissVoiceError)
+                    }
+                    AnimatedVisibility(voiceState == VoiceState.SPEAKING, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                        SpeakingPill(onStop = vm::stopSpeaking)
+                    }
+                    AnimatedVisibility(voiceState == VoiceState.LISTENING, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                        ListeningPanel(partial = partial, level = level, onDone = onMic, onCancel = vm::cancelListening)
+                    }
                     Composer(
                         value = input, onValueChange = { input = it },
                         busy = state.busy, onSend = send, onStop = vm::stop,
+                        micEnabled = vm.sttAvailable, listening = voiceState == VoiceState.LISTENING, onMic = onMic,
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MicRationaleDialog(onAllow: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { IconTile(AppIcons.Mic, MaterialTheme.colorScheme.primary, size = 48) },
+        title = { Text("Talk to JARVIS", textAlign = TextAlign.Center) },
+        text = {
+            Text(
+                "JARVIS needs the microphone to hear you. It listens only after you tap the mic, and stops when you're done. " +
+                    "When your phone supports it, speech is recognised on the phone itself.",
+                textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        confirmButton = { Button(onClick = { onDismiss(); onAllow() }) { Text("Allow microphone") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now") } },
+    )
+}
+
+@Composable
+private fun ListeningPanel(partial: String, level: Float, onDone: () -> Unit, onCancel: () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            JarvisOrb(96.dp, state = OrbState.LISTENING, level = level)
+            Spacer(Modifier.height(12.dp))
+            AnimatedContent(partial.ifBlank { "Listening…" }, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "partial") { t ->
+                Text(
+                    t, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center,
+                    color = if (partial.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                Button(onClick = onDone) { Text("Done") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeakingPill(onStop: () -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, onClick = onStop) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(AppIcons.GraphicEq, null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Speaking · tap to stop", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceErrorLine(error: SttError?, onDismiss: () -> Unit) {
+    val text = when (error) {
+        SttError.NO_SPEECH -> "Didn't hear anything. Tap the mic and speak."
+        SttError.NO_MATCH -> "Didn't catch that. Try again."
+        SttError.NO_PERMISSION -> "Microphone permission is off. Allow it in Android settings."
+        SttError.BUSY -> "Speech recognition is busy. Try again in a moment."
+        SttError.NETWORK -> "Speech recognition needs a connection, or offline speech (Android settings → Languages)."
+        SttError.UNAVAILABLE -> "Speech recognition isn't available for your language on this phone."
+        SttError.OTHER -> "Speech recognition failed. Try again."
+        null -> ""
+    }
+    Surface(
+        shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), onClick = onDismiss,
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(AppIcons.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            Icon(AppIcons.Close, "Dismiss", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
         }
     }
 }
@@ -379,7 +511,16 @@ private fun BudgetBanner(exceeded: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Composer(value: String, onValueChange: (String) -> Unit, busy: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
+private fun Composer(
+    value: String,
+    onValueChange: (String) -> Unit,
+    busy: Boolean,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+    micEnabled: Boolean,
+    listening: Boolean,
+    onMic: () -> Unit,
+) {
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -399,13 +540,24 @@ private fun Composer(value: String, onValueChange: (String) -> Unit, busy: Boole
                     disabledIndicatorColor = Color.Transparent,
                 ),
             )
+            val mode = when {
+                busy -> 0
+                value.isBlank() && micEnabled -> 1
+                else -> 2
+            }
             AnimatedContent(
-                targetState = busy,
+                targetState = mode,
                 transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) },
                 label = "sendStop",
                 modifier = Modifier.padding(bottom = 4.dp),
-            ) { isBusy ->
-                if (isBusy) {
+            ) { m ->
+                if (m == 1) {
+                    FilledIconButton(
+                        onClick = onMic, modifier = Modifier.size(48.dp),
+                        colors = if (listening) IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
+                        else IconButtonDefaults.filledIconButtonColors(),
+                    ) { Icon(AppIcons.Mic, if (listening) "Finish speaking" else "Talk to JARVIS") }
+                } else if (m == 0) {
                     FilledIconButton(
                         onClick = onStop, modifier = Modifier.size(48.dp),
                         colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest, contentColor = MaterialTheme.colorScheme.onSurface),

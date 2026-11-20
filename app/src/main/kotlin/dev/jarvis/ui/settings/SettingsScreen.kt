@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +33,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -82,6 +85,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSecurity: () -> Unit, vm: SettingsV
             settings?.let {
                 SectionLabel("Intelligence")
                 ModelSection(vm, it)
+                VoiceSection(vm, it)
                 SectionLabel("Spending")
                 BudgetSection(vm, it)
                 SectionLabel("Privacy")
@@ -120,6 +124,26 @@ private fun ModelSection(vm: SettingsViewModel, s: AppSettings) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+fun VoiceSection(vm: SettingsViewModel, s: AppSettings) {
+    var rate by remember(s.speechRate) { mutableFloatStateOf(s.speechRate) }
+    SettingsCard("Voice", AppIcons.Mic, subtitle = "Tap the mic in chat to talk; replies are spoken sentence by sentence") {
+        ToggleRow("Speak replies", "Off = quiet mode: answers on screen only", s.speakReplies, vm::setSpeakReplies)
+        ToggleRow("On-device speech recognition", "Keeps your voice on the phone when supported", s.preferOnDeviceStt, vm::setPreferOnDeviceStt)
+        Text("Speaking speed: " + "%.1fx".format(rate), style = MaterialTheme.typography.bodyLarge)
+        Slider(
+            value = rate, onValueChange = { rate = it }, valueRange = 0.7f..1.6f, steps = 8,
+            onValueChangeFinished = { vm.setSpeechRate(rate) },
+        )
+        OutlinedButton(onClick = vm::testVoice) {
+            Icon(AppIcons.VolumeUp, null, modifier = Modifier.size(18.dp))
+            Text("  Test voice")
+        }
+        Hint("Fingerprint answers are never read aloud, and nothing sensitive is spoken while the phone is locked.")
     }
 }
 

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import dev.jarvis.agent.Models
@@ -22,6 +23,7 @@ enum class StepStatus { TODO, DONE, SKIPPED }
 /** Onboarding wizard steps. Phase 1 ships steps 1 and 4 (CLAUDE.md section 15). */
 enum class OnboardingStep(val title: String) {
     ANTHROPIC_KEY("Anthropic API key"),
+    VOICE("Voice"),
     SECURITY("Security"),
     CONNECTORS("Connectors"),
 }
@@ -46,6 +48,12 @@ data class AppSettings(
     /** Session lengths: Tier 1 personal ~5 min, Tier 2 sensitive ~2 min. */
     val personalSessionMinutes: Int = 5,
     val sensitiveSessionMinutes: Int = 2,
+    /** Speak replies to voice questions (off = quiet mode, screen only). */
+    val speakReplies: Boolean = true,
+    /** Use on-device speech recognition when available (audio stays on the phone). */
+    val preferOnDeviceStt: Boolean = true,
+    /** Text-to-speech rate, 1.0 = normal. */
+    val speechRate: Float = 1.0f,
     val onboarding: Map<OnboardingStep, StepStatus> = OnboardingStep.entries.associateWith { StepStatus.TODO },
 ) {
     val onboardingComplete: Boolean get() = onboarding.values.none { it == StepStatus.TODO }
@@ -78,6 +86,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             toolRules = ToolPolicy.decode(p[TOOL_RULES]),
             personalSessionMinutes = p[PERSONAL_MINUTES] ?: 5,
             sensitiveSessionMinutes = p[SENSITIVE_MINUTES] ?: 2,
+            speakReplies = p[SPEAK_REPLIES] ?: true,
+            preferOnDeviceStt = p[ON_DEVICE_STT] ?: true,
+            speechRate = p[SPEECH_RATE] ?: 1.0f,
             onboarding = OnboardingStep.entries.associateWith { step ->
                 p[stepKey(step)]?.let { runCatching { StepStatus.valueOf(it) }.getOrNull() } ?: StepStatus.TODO
             },
@@ -103,6 +114,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         it[PERSONAL_MINUTES] = personal.coerceIn(1, 30)
         it[SENSITIVE_MINUTES] = sensitive.coerceIn(1, 10)
     }
+    suspend fun setSpeakReplies(v: Boolean) = store.edit { it[SPEAK_REPLIES] = v }
+    suspend fun setPreferOnDeviceStt(v: Boolean) = store.edit { it[ON_DEVICE_STT] = v }
+    suspend fun setSpeechRate(v: Float) = store.edit { it[SPEECH_RATE] = v.coerceIn(0.5f, 2f) }
     suspend fun setStep(step: OnboardingStep, status: StepStatus) = store.edit { it[stepKey(step)] = status.name }
 
     private companion object {
@@ -117,6 +131,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val TOOL_RULES = stringPreferencesKey("tool_rules")
         val PERSONAL_MINUTES = intPreferencesKey("session_personal_minutes")
         val SENSITIVE_MINUTES = intPreferencesKey("session_sensitive_minutes")
+        val SPEAK_REPLIES = booleanPreferencesKey("speak_replies")
+        val ON_DEVICE_STT = booleanPreferencesKey("prefer_on_device_stt")
+        val SPEECH_RATE = floatPreferencesKey("speech_rate")
         fun stepKey(step: OnboardingStep) = stringPreferencesKey("onboarding_${step.name.lowercase()}")
     }
 }
