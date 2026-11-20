@@ -30,6 +30,10 @@ import dev.jarvis.security.AuthCoordinator
 import dev.jarvis.security.KeystoreSecretStore
 import dev.jarvis.security.PinAuthenticator
 import dev.jarvis.security.SessionManager
+import dev.jarvis.voice.AndroidStt
+import dev.jarvis.voice.AndroidTts
+import dev.jarvis.voice.Stt
+import dev.jarvis.voice.Tts
 import dev.jarvis.security.SecretKey
 import dev.jarvis.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
@@ -128,6 +132,13 @@ object AppModule {
 
     @Provides @Singleton
     fun sessionManager() = SessionManager()
+
+    @Provides @Singleton
+    fun stt(@ApplicationContext c: Context): Stt = AndroidStt(c)
+
+    /** One TTS engine for the app: initialising it is slow. */
+    @Provides @Singleton
+    fun tts(@ApplicationContext c: Context): Tts = AndroidTts(c)
 
     @Provides @Singleton
     fun pinAuthenticator(secrets: SecretStore) = PinAuthenticator(secrets)

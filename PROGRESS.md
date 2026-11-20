@@ -1,8 +1,34 @@
 # PROGRESS
 
 ## Current phase
-**Design polish pass** (between Phases 3 and 4): built and device-tested (2026-11-21, "looks good").
-Not yet committed: goes up as a pull request. Phase 4 starts when you say go.
+**Phase 4: Voice (push-to-talk).** Built on branch `phase-4-voice` (2026-11-21): **173 unit tests, 0 failures**,
+debug APK ~43 MB (SHA-256 `93f84c7a…4e1d0983`). **Device-tested (2026-11-21): works.** Pull request next.
+Design polish: merged (PR #1, 2026-11-21).
+
+## Phase 4: done (code), see D20
+- [x] Mic button in the chat box (when it's empty): tap to talk, live transcript, animated orb that follows your voice
+- [x] Speech recognition: on-device preferred (audio stays on the phone), falls back if the language isn't installed
+- [x] Spoken replies, sentence by sentence while streaming; music ducks; speed setting
+- [x] Barge-in: tap the mic or "Speaking · tap to stop" to interrupt
+- [x] Quiet mode: speaker toggle in the top bar (screen only)
+- [x] Screen-only rule: fingerprint answers are never read out ("Done, it's on your screen."); nothing sensitive
+  spoken while the phone is locked
+- [x] Spoken "PIN or fingerprint?" with a spoken answer (PIN still typed: spoken PIN needs voice match, later phase)
+- [x] "lock" works by voice
+- [x] Settings → Voice; onboarding step 2 (microphone + test voice)
+- [x] 24 new unit tests (sentence splitting, speech cleanup, spoken choice, voice-session rules, event order)
+
+## Phase 4: device checklist (user: "works", 2026-11-21)
+1. Update; the wizard shows the new "Talk to JARVIS" step: allow the microphone, tap Test voice.
+2. Tap the mic, ask "what's the capital of France?": your words appear live, then the answer is spoken.
+3. Ask something long and tap the mic while it's talking: it stops and listens again.
+4. Tap the speaker icon (quiet mode) and ask by voice: the answer appears but isn't spoken.
+5. "What's my net worth?" by voice: it asks "PIN or fingerprint?" out loud; say "fingerprint": after the
+   fingerprint, it says "Done, it's on your screen." and doesn't read the number. Say "PIN" another time: type
+   the PIN; the answer is spoken.
+6. Play music, then ask by voice: the music dips while JARVIS talks.
+7. Say "lock": it says "Locked."
+8. Settings → Voice: change speed, Test voice; turn on-device recognition off and on.
 Phase 3: Security. Done and device-tested (2026-11-20).
 
 ## Design polish: done (code), see D19
@@ -209,6 +235,15 @@ See [docs/decisions.md](docs/decisions.md) (D1–D10). Key ones:
 3. **Effort/latency:** chat runs at `effort: low` (cheapest). Kept for now.
 4. **Routing:** now Haiku 5.5 everywhere by default (D11). Revisit after device testing if answers feel weak.
 
-## Next
-Phase 4 (Voice, push-to-talk: speech-to-text, streaming text-to-speech, spoken replies, quiet mode, barge-in).
-**Starts only after you OK Phase 3.**
+## Next: Phase 5 (wake word), with your requests (2026-11-21)
+- "Hey Jarvis" wake word, always-on in a foreground service (persistent notification, on/off toggle,
+  battery-optimisation prompt). Engine: whichever is free and best optimised; compare Porcupine vs openWakeWord
+  (cost, battery, accuracy, licence) before building and record the choice.
+- Full-screen wake animation (fluid, Siri-like feel but JARVIS's own design: orb blooms in, light ripples with
+  your voice, pulses while answering).
+- Proximity sensor: show the animation and wake the screen only when the phone is NOT in a pocket.
+- In a pocket: screen stays off, conversation is audio only; if a Bluetooth headset (e.g. C40) is connected, use
+  its mic and speaker (overlaps Phase 5b audio routing).
+- Note from testing: the C40 woke up when voice was used; the app has no Bluetooth code, so this was Android
+  routing assistant/mic audio to the paired headset. Proper helmet handling is Phase 5b.
+**Starts after Phase 4 is device-tested and its pull request is open.**

@@ -9,6 +9,7 @@ import dev.jarvis.connectors.ConnectorStatus
 import dev.jarvis.connectors.ConnectorTestResult
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
 import dev.jarvis.data.AppSettings
+import dev.jarvis.voice.Tts
 import dev.jarvis.data.AuditCategory
 import dev.jarvis.data.AuditEvent
 import dev.jarvis.data.AuditLog
@@ -40,6 +41,7 @@ class SettingsViewModel @Inject constructor(
     private val history: HistoryStore,
     private val current: CurrentConversation,
     private val audit: AuditLog,
+    private val tts: Tts,
 ) : ViewModel() {
 
     /** Result line for the Data section. */
@@ -139,6 +141,16 @@ class SettingsViewModel @Inject constructor(
         current.open(null)
         audit.record(AuditEvent(AuditCategory.DATA, "delete_all_history", "ok"))
         dataMessage.value = "All chat history deleted."
+    }
+
+    fun setSpeakReplies(v: Boolean) = viewModelScope.launch { repo.setSpeakReplies(v) }
+    fun setPreferOnDeviceStt(v: Boolean) = viewModelScope.launch { repo.setPreferOnDeviceStt(v) }
+    fun setSpeechRate(v: Float) = viewModelScope.launch { repo.setSpeechRate(v); tts.setRate(v) }
+
+    /** Speaks a short line so the user can hear the voice and speed. */
+    fun testVoice() {
+        tts.stop()
+        tts.speak("Hello, I'm JARVIS. This is how I'll sound.")
     }
 
     fun setStopAtBudget(v: Boolean) = viewModelScope.launch { repo.setStopAtBudget(v) }

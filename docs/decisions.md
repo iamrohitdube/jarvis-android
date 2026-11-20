@@ -217,3 +217,42 @@ CLAUDE.md's level descriptions are short, so this is the exact interpretation, e
   the rest of the app process, even after the 2-minute session expires or the screen turns off. Only an explicit
   "lock" / Lock now hides them again. Reveals are in memory only, so a restart hides them. New sensitive questions
   still need PIN or fingerprint as before.
+
+## D20. Voice, push-to-talk (Phase 4, 2026-11-21)
+- **Pipeline:** mic tap → Android `SpeechRecognizer` (partial results shown live) → agent → `TextToSpeech`, one
+  sentence at a time as text streams in (`SentenceChunker`). Speech starts after the first sentence, not after the
+  whole reply. The chunker won't split on decimals ("12.4 lakh"), common abbreviations ("e.g.", "Rs.", "vs.") or
+  initials, and markdown and URLs are stripped before speaking.
+- **Speech recognition:**
+  - On-device recognition is preferred when the phone has it (Android 12+, `createOnDeviceSpeechRecognizer`), so
+    audio stays on the phone. If the on-device language isn't installed, that session falls back to the default
+    recognizer, which may use Google's servers. There's a toggle for this in Settings.
+  - All recognizer calls run on the main thread, as the platform requires.
+  - Push-to-talk only: the recognizer isn't meant for continuous listening, and the wake word is Phase 5.
+- **Speech output:**
+  - Audio attributes are `USAGE_ASSISTANT` + `CONTENT_TYPE_SPEECH`.
+  - JARVIS holds transient audio focus with ducking while speaking, so music dips instead of stopping. It stops
+    talking if another app takes focus, such as a call. Android 15+ allows focus only for the top app or a
+    foreground service; push-to-talk is always the top app.
+  - Utterance callbacks can come from any thread, so speaking state is kept thread-safe.
+  - One TTS engine is shared app-wide (initialising it is slow), and speed is adjustable.
+- **What is spoken:**
+  - Only turns started by voice. Typed questions get on-screen answers.
+  - Quiet mode: the speaker toggle in the top bar, or Settings → Voice → Speak replies.
+  - Fingerprint-authorised (screen-only) replies are never read out. JARVIS says "Done, it's on your screen."
+    instead. The agent emits an `Authorized` event before any reply text, so this is decided before speaking
+    starts.
+  - Sensitive replies are never spoken while the phone is locked ("It's on your screen once you unlock.").
+  - PIN-authorised sensitive replies are spoken and shown, as CLAUDE.md requires.
+- **Barge-in:** tapping the mic while JARVIS is speaking or thinking stops speech and cancels the current request,
+  then starts listening. Tapping the "Speaking · tap to stop" pill stops speech and keeps the reply on screen.
+- **Spoken auth choice:** in a voice turn, "That's sensitive. PIN or fingerprint?" is spoken and JARVIS listens
+  once for "PIN" or "fingerprint" (also "thumb", "biometric"). An unclear answer or silence leads to the existing
+  6-second default (fingerprint). The PIN itself is still typed: spoken PINs need voice match (CLAUDE.md section
+  6), which arrives with the wake-word / voice-match work.
+- **Permissions:**
+  - `RECORD_AUDIO` is asked for on the first mic tap, after a short explanation, or in onboarding step 2.
+  - Android 11+ `<queries>` entries for `android.speech.RecognitionService` and
+    `android.intent.action.TTS_SERVICE`, per the platform docs.
+- **Onboarding:** a new step 2, "Talk to JARVIS" (microphone permission + Test voice), so existing installs see the
+  wizard once more.

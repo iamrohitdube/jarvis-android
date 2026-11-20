@@ -66,6 +66,16 @@ Phase 3 status: access tiers, PIN, fingerprint, lockout, sessions and tool polic
 - **Audit:** every auth event (prompt, PIN ok/wrong/malformed/locked, fingerprint ok/cancelled/error, lockout and
   reset, session lock, PIN set/changed/removed, policy changes) is recorded without secrets.
 
+## Voice (Phase 4)
+- The microphone is used only during push-to-talk, after a tap. There's no background listening until the
+  wake-word phase.
+- Speech recognition prefers the on-device recognizer, so audio stays on the phone. If that isn't available for
+  your language, the phone's default recognizer is used, which may send audio to Google. You can turn the
+  on-device preference off in Settings → Voice.
+- Fingerprint-authorised answers are never spoken, and sensitive answers are never spoken while the phone is
+  locked. Both are enforced in `VoiceSession`, not in prompts.
+- Spoken PINs aren't supported yet (they need voice match). The PIN is always typed in a masked field.
+
 ## Prompt injection
 The system prompt marks tool, email, web and document content as untrusted data. In Phase 1 every tool is
 read-only, so nothing can act on injected instructions. Enforcement in code (confirmations for actions after

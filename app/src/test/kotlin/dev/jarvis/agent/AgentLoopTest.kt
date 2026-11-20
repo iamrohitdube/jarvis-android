@@ -355,6 +355,19 @@ class AgentLoopTest {
         assertTrue(gate.calls.isEmpty())
     }
 
+    @Test fun authorizedEventComesBeforeAnyReplyText() = runBlocking {
+        val gate = ScriptedGate { AccessResult.Granted(it, AuthMethod.BIOMETRIC, screenOnly = true, sensitive = true) }
+        val events = AgentLoop(FakeLlm({ reply("About 1 lakh.") }), mapOf(ToolRegistry.INDMONEY to FakeConnector("tok")), meter, gate)
+            .run(emptyList(), "what's my net worth", settings).toList()
+        val authIndex = events.indexOfFirst { it is AgentEvent.Authorized }
+        val textIndex = events.indexOfFirst { it is AgentEvent.TextDelta }
+        assertTrue(authIndex in 0 until textIndex)
+        assertEquals(AgentEvent.Authorized(screenOnly = true, sensitive = true), events[authIndex])
+
+        val plain = AgentLoop(FakeLlm({ reply("Hi.") }), emptyMap(), meter, gate).run(emptyList(), "hi", settings).toList()
+        assertTrue(plain.none { it is AgentEvent.Authorized })
+    }
+
     @Test fun mcpAuthHeuristic() {
         assertTrue(AgentLoop.looksLikeMcpAuthError("MCP server 'x' returned 401"))
         assertTrue(!AgentLoop.looksLikeMcpAuthError("max_tokens: must be positive"))

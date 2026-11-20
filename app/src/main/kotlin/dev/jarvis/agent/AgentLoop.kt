@@ -51,6 +51,8 @@ sealed interface AgentError {
 
 sealed interface AgentEvent {
     data class Routed(val model: String, val toolNames: List<String>, val fromCache: Boolean = false) : AgentEvent
+    /** The security gate granted tool access. Emitted before any reply text, so voice knows whether it may speak. */
+    data class Authorized(val screenOnly: Boolean, val sensitive: Boolean) : AgentEvent
     data class TextDelta(val text: String) : AgentEvent
     data class ToolActivity(val toolName: String) : AgentEvent
     data class Finished(
@@ -102,7 +104,8 @@ class AgentLoop(
         // Security gate: policy + auth before any tool or saved tool data is used (CLAUDE.md section 6).
         var sensitive = false
         var screenOnly = false
-        if (route.tools.isNotEmpty()) {
+        val gated = route.tools.isNotEmpty()
+        if (gated) {
             when (val decision = access.authorize(route.tools, preferredMethod)) {
                 is AccessResult.Granted -> {
                     route = route.copy(tools = decision.tools, groups = decision.tools.map { it.group }.toSet())
@@ -126,6 +129,7 @@ class AgentLoop(
             }
         }
         emit(AgentEvent.Routed(route.model, route.tools.map { it.name }, fromCache = cached.isNotEmpty()))
+        if (gated) emit(AgentEvent.Authorized(screenOnly, sensitive))
 
         val servers = mutableListOf<McpServerConfig>()
         for (cid in route.connectorIds) {
