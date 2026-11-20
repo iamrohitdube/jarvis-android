@@ -1,0 +1,9 @@
+# kotlinx.serialization: keep generated serializers for @Serializable classes.
+-keepattributes *Annotation*, InnerClasses
+-keepclassmembers @kotlinx.serialization.Serializable class dev.jarvis.** {
+    *** Companion;
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keepclasseswithmembers class dev.jarvis.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
