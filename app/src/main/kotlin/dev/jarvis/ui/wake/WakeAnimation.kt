@@ -29,7 +29,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -67,6 +70,8 @@ fun WakeAnimation(
     onMic: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Shown when JARVIS can learn from a false wake (personal check trained). */
+    onNotForMe: (() -> Unit)? = null,
 ) {
     val appear = remember { Animatable(0f) }
     LaunchedEffect(phase == WakePhase.DONE) {
@@ -74,6 +79,9 @@ fun WakeAnimation(
         else appear.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow))
     }
     val a = appear.value.coerceIn(0f, 1f)
+    // First frame: just black and text, so the screen appears at once; the orb (GPU shader) joins a frame later.
+    var orbReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; orbReady = true }
 
     Box(modifier.fillMaxSize().background(Color.Black)) {
         Column(
@@ -99,7 +107,7 @@ fun WakeAnimation(
                 Text(s, color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Light)
             }
             Spacer(Modifier.weight(0.6f))
-            JarvisOrb(
+            if (!orbReady) Spacer(Modifier.size(290.dp)) else JarvisOrb(
                 size = 290.dp,
                 modifier = Modifier.scale(0.55f + 0.45f * appear.value),
                 state = when (phase) {
@@ -131,7 +139,11 @@ fun WakeAnimation(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Spacer(Modifier.size(48.dp))
+                if (onNotForMe != null) {
+                    androidx.compose.material3.TextButton(onClick = onNotForMe) {
+                        Text("Not for me", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelLarge)
+                    }
+                } else Spacer(Modifier.size(48.dp))
                 MicButton(active = phase == WakePhase.LISTENING || phase == WakePhase.SPEAKING, onClick = onMic)
                 IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
                     Icon(AppIcons.Close, "Close", tint = Color.White.copy(alpha = 0.75f))

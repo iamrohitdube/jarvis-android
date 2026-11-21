@@ -217,3 +217,59 @@ class VoiceSessionTest {
         assertTrue(tts.spoken.isEmpty())
     }
 }
+
+class SpokenChoiceMoreTest {
+    @org.junit.Test fun commonMishearingsOfPin() {
+        listOf("ping", "pins", "P I N", "the pin please", "pen").forEach {
+            org.junit.Assert.assertEquals(it, SpokenChoice.Choice.PIN, SpokenChoice.parse(it))
+        }
+    }
+
+    @org.junit.Test fun checksEveryGuess() {
+        org.junit.Assert.assertEquals(SpokenChoice.Choice.PIN, SpokenChoice.parseAny(listOf("being", "pin")))
+        org.junit.Assert.assertEquals(null, SpokenChoice.parseAny(listOf("hmm", "what")))
+    }
+
+    @org.junit.Test fun answerWindowIsElevenSeconds() {
+        org.junit.Assert.assertEquals(11_000L, dev.jarvis.security.AuthCoordinator.CHOICE_TIMEOUT_MS)
+    }
+}
+
+
+class LockedPinSpeechTest {
+    private class SilentStt : Stt {
+        override fun isAvailable() = true
+        override fun listen(preferOnDevice: Boolean) = kotlinx.coroutines.flow.emptyFlow<SttEvent>()
+        override fun stopListening() = Unit
+    }
+    private class Rec : Tts {
+        override val speaking = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val spoken = mutableListOf<String>()
+        override fun speak(text: String) { spoken += text }
+        override fun stop() = Unit
+        override fun setRate(rate: Float) = Unit
+    }
+
+    private val bg = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+    @org.junit.After fun tearDown() { bg.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
+
+    @org.junit.Test fun pinUnlockedAnswerIsSpokenOnALockedPhone() {
+        val tts = Rec()
+        val v = VoiceSession(SilentStt(), tts, bg, deviceLocked = { true })
+        v.beginTurn(voice = true)
+        v.onAuthorized(screenOnly = false, sensitive = true, byPin = true)
+        v.onTextDelta("Your net worth is 12 lakh. ")
+        v.onFinished()
+        org.junit.Assert.assertEquals(listOf("Your net worth is 12 lakh."), tts.spoken)
+    }
+
+    @org.junit.Test fun withoutPinASensitiveAnswerIsNotSpokenWhenLocked() {
+        val tts = Rec()
+        val v = VoiceSession(SilentStt(), tts, bg, deviceLocked = { true })
+        v.beginTurn(voice = true)
+        v.onAuthorized(screenOnly = false, sensitive = true, byPin = false)
+        v.onTextDelta("Your net worth is 12 lakh. ")
+        v.onFinished()
+        org.junit.Assert.assertEquals(listOf(VoiceSession.LOCKED_LINE), tts.spoken)
+    }
+}

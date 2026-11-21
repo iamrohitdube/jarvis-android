@@ -102,9 +102,12 @@ object SpeechText {
 object SpokenChoice {
     enum class Choice { PIN, FINGERPRINT }
 
+    /** First clear answer among the recognizer's guesses (best first). */
+    fun parseAny(guesses: List<String>): Choice? = guesses.asSequence().mapNotNull { parse(it) }.firstOrNull()
+
     fun parse(transcript: String): Choice? {
         val t = " " + transcript.lowercase().replace(Regex("[^a-z ]"), " ") + " "
-        val pin = listOf(" pin ", " pin number ", " pen ", " bin ", " code ", " passcode ").any { it in t }
+        val pin = listOf(" pin ", " pins ", " ping ", " peen ", " pen ", " bin ", " p i n ", " pin number ", " code ", " passcode ").any { it in t }
         val finger = listOf("finger", "biometric", "thumb", "touch").any { it in t }
         return when {
             pin && !finger -> Choice.PIN

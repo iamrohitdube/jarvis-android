@@ -53,12 +53,13 @@ class ModelDownloader(context: Context, private val http: OkHttpClient) {
     fun file(m: ModelFile) = File(dir, m.path)
 
     /** Cheap check (size); integrity was verified when each file was saved. */
-    fun installed(): Boolean = VoiceModels.ALL.all { file(it).length() == it.bytes }
+    fun installed(files: List<ModelFile> = VoiceModels.ALL): Boolean = files.all { file(it).length() == it.bytes }
 
-    fun download(): Flow<DownloadProgress> = flow {
-        var done = VoiceModels.ALL.filter { file(it).length() == it.bytes }.sumOf { it.bytes }
-        emit(DownloadProgress(done, VoiceModels.totalBytes))
-        for (m in VoiceModels.ALL) {
+    fun download(files: List<ModelFile> = VoiceModels.ALL): Flow<DownloadProgress> = flow {
+        val total = files.sumOf { it.bytes }
+        var done = files.filter { file(it).length() == it.bytes }.sumOf { it.bytes }
+        emit(DownloadProgress(done, total))
+        for (m in files) {
             val target = file(m)
             if (target.length() == m.bytes) continue
             target.parentFile?.mkdirs()
@@ -78,7 +79,7 @@ class ModelDownloader(context: Context, private val http: OkHttpClient) {
                             md.update(buf, 0, n)
                             done += n
                             sinceEmit += n
-                            if (sinceEmit > 512 * 1024) { emit(DownloadProgress(done, VoiceModels.totalBytes)); sinceEmit = 0 }
+                            if (sinceEmit > 256 * 1024) { emit(DownloadProgress(done, total)); sinceEmit = 0 }
                         }
                     }
                 }
@@ -91,8 +92,9 @@ class ModelDownloader(context: Context, private val http: OkHttpClient) {
             if (target.exists()) target.delete()
             if (!tmp.renameTo(target)) throw IOException("Couldn't save ${m.path}")
         }
-        emit(DownloadProgress(VoiceModels.totalBytes, VoiceModels.totalBytes, finished = true))
+        emit(DownloadProgress(total, total, finished = true))
     }.flowOn(Dispatchers.IO)
 
-    fun delete() { dir.deleteRecursively() }
+    /** Deletes the given models (default: the spoken-PIN models), leaving others in place. */
+    fun delete(files: List<ModelFile> = VoiceModels.ALL) { files.forEach { file(it).delete() } }
 }

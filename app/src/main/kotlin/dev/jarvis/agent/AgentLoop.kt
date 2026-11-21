@@ -52,7 +52,8 @@ sealed interface AgentError {
 sealed interface AgentEvent {
     data class Routed(val model: String, val toolNames: List<String>, val fromCache: Boolean = false) : AgentEvent
     /** The security gate granted tool access. Emitted before any reply text, so voice knows whether it may speak. */
-    data class Authorized(val screenOnly: Boolean, val sensitive: Boolean) : AgentEvent
+    /** [byPin]: unlocked with a PIN for this request (may be spoken even on a locked phone). */
+    data class Authorized(val screenOnly: Boolean, val sensitive: Boolean, val byPin: Boolean = false) : AgentEvent
     data class TextDelta(val text: String) : AgentEvent
     data class ToolActivity(val toolName: String) : AgentEvent
     data class Finished(
@@ -115,6 +116,7 @@ class AgentLoop(
         // Security gate: policy + auth before any tool or saved tool data is used (CLAUDE.md section 6).
         var sensitive = false
         var screenOnly = false
+        var byPin = false
         val gated = route.tools.isNotEmpty()
         if (gated) {
             when (val decision = access.authorize(route.tools, preferredMethod)) {
@@ -122,6 +124,7 @@ class AgentLoop(
                     route = route.copy(tools = decision.tools, groups = decision.tools.map { it.group }.toSet())
                     sensitive = decision.sensitive
                     screenOnly = decision.screenOnly
+                    byPin = decision.method == dev.jarvis.security.AuthMethod.PIN
                 }
                 is AccessResult.Denied -> {
                     auditRequest("denied:" + decision.reason.name.lowercase(), route, null)
@@ -140,7 +143,7 @@ class AgentLoop(
             }
         }
         emit(AgentEvent.Routed(route.model, route.tools.map { it.name }, fromCache = cached.isNotEmpty()))
-        if (gated) emit(AgentEvent.Authorized(screenOnly, sensitive))
+        if (gated) emit(AgentEvent.Authorized(screenOnly, sensitive, byPin))
 
         val servers = mutableListOf<McpServerConfig>()
         for (cid in route.connectorIds) {

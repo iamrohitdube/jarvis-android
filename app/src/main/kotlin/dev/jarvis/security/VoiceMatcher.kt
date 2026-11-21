@@ -21,4 +21,5 @@ interface VoiceMatcher {
 }
 
 /** Result of capturing a spoken PIN: the recognised digits (on-device) and whether the voice matched. */
-data class SpokenPin(val digits: String?, val voiceMatched: Boolean)
+/** [similarity] = voice-match score (0..1, numbers only) when a voice check ran; logged for calibration. */
+data class SpokenPin(val digits: String?, val voiceMatched: Boolean, val similarity: Float? = null)

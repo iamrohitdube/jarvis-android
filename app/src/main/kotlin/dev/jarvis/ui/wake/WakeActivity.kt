@@ -56,21 +56,31 @@ class WakeViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val auth: AuthCoordinator,
     device: AndroidBiometricAvailability,
-    voicePinEngine: dev.jarvis.voice.VoicePinEngine,
+    private val recorder: dev.jarvis.voice.VoicePinEngine,
     cue: dev.jarvis.voice.WakeCue,
+    private val bus: WakeBus,
+    private val heyJarvis: dev.jarvis.voice.OpenWakeWordEngine,
+    private val capture: dev.jarvis.voice.VoiceCapture,
+    private val transcriber: dev.jarvis.voice.Transcriber,
     savedState: androidx.lifecycle.SavedStateHandle,
 ) : ViewModel() {
     /** Question said together with the wake word, if any (passed by the listener). */
     private val preheard: String? = savedState[WakeActivity.EXTRA_QUESTION]
-    private val voicePin = dev.jarvis.voice.VoicePinFlow(voicePinEngine, tts, auth, settings)
-    private val conversation = VoiceConversation(stt, tts, agent, history, settings, cue) { device.deviceLocked() }
+    private val voicePin = dev.jarvis.voice.VoicePinFlow(recorder, tts, auth, settings)
+    private val conversation = VoiceConversation(stt, tts, agent, history, settings, cue, capture, transcriber) { device.deviceLocked() }
     val phase = conversation.phase
     val transcript = conversation.transcript
     val reply = conversation.reply
     val level = conversation.level
 
     init {
-        viewModelScope.launch { conversation.runOnce(viewModelScope, preheard) }
+        viewModelScope.launch {
+            // Opened the instant "Hey Jarvis" was heard: wait for the question said in the same breath (if any).
+            val pending = bus.pendingQuestion.value
+            val question = preheard ?: pending?.await()
+            val soundPlayed = pending != null && bus.wakeSoundPlayed.value
+            conversation.runOnce(viewModelScope, question, soundPlayed)
+        }
         viewModelScope.launch { auth.prompt.collect { p -> voicePin.onPrompt(p, voiceTurn = true) } }
         // Phone in hand: ask "PIN or fingerprint?" out loud and accept a spoken answer.
         viewModelScope.launch {
@@ -78,11 +88,21 @@ class WakeViewModel @Inject constructor(
             auth.prompt.collect { p ->
                 if (p?.stage == AuthPrompt.Stage.CHOOSE && p.id != asked && settings.current().speakReplies) {
                     asked = p.id
-                    tts.speak(VoiceSession.CHOICE_QUESTION)
-                    withTimeoutOrNull(4_000) { tts.speaking.first { it }; tts.speaking.first { !it } }
-                    val answer = stt.listen(settings.current().preferOnDeviceStt)
-                        .firstOrNull { it is SttEvent.Final || it is SttEvent.Failed } as? SttEvent.Final
-                    when (answer?.let { SpokenChoice.parse(it.text) }) {
+                    // Two tries within the answer window; unclear twice = the coordinator falls back to fingerprint.
+                    var choice: SpokenChoice.Choice? = null
+                    for (attempt in 0..1) {
+                        tts.speak(if (attempt == 0) VoiceSession.CHOICE_QUESTION else "Say PIN or fingerprint.")
+                        withTimeoutOrNull(4_000) { tts.speaking.first { it }; tts.speaking.first { !it } }
+                        // Record a fixed 3.5 s on our own mic (no speech detection: a quiet "PIN" must not be missed),
+                        // then transcribe once.
+                        val audio = recorder.recordFor(3_500)
+                        val pcm = ShortArray(audio.size) { (audio[it] * 32767f).toInt().coerceIn(-32768, 32767).toShort() }
+                        val text = transcriber.transcribe(pcm, settings.current().preferOnDeviceStt)
+                        choice = text?.let { SpokenChoice.parse(it) }
+                        dev.jarvis.voice.dlog("choice: attempt ${attempt + 1}, transcribed=${text != null}, parsed=$choice")
+                        if (choice != null || auth.prompt.value?.id != p.id) break
+                    }
+                    when (choice) {
                         SpokenChoice.Choice.PIN -> auth.choose(AuthMethod.PIN)
                         SpokenChoice.Choice.FINGERPRINT -> auth.choose(AuthMethod.BIOMETRIC)
                         null -> Unit
@@ -93,6 +113,16 @@ class WakeViewModel @Inject constructor(
     }
 
     fun interrupt() = conversation.interrupt()
+
+    /** "Not for me" is offered when this wake came from the wake model with the personal check on. */
+    val canLearn: Boolean = bus.lastWakeFeatures.value?.isNotEmpty() == true && heyJarvis.hasVerifier()
+
+    /** The wake was a mistake: stop, and teach the personal check to ignore that moment (in the background). */
+    fun notForMe() {
+        conversation.interrupt()
+        bus.lastWakeFeatures.value?.takeIf { it.isNotEmpty() }?.let { heyJarvis.learnFalseWake(it) }
+        bus.lastWakeFeatures.value = null
+    }
 
     /** Mic button: stop talking while speaking; finish listening while listening. */
     fun micTapped() {
@@ -166,6 +196,11 @@ class WakeActivity : ComponentActivity() {
                         phase, level, transcript, reply,
                         onMic = vm::micTapped,
                         onClose = { vm.interrupt(); finish() },
+                        onNotForMe = if (vm.canLearn) ({
+                            vm.notForMe()
+                            android.widget.Toast.makeText(this@WakeActivity, "Got it. I'll ignore that next time.", android.widget.Toast.LENGTH_SHORT).show()
+                            finish()
+                        }) else null,
                     )
                 }
                 AuthHost(auth)

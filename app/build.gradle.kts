@@ -178,6 +178,8 @@ dependencies {
     implementation(libs.androidx.biometric)
     // On-device wake word engine (sherpa-onnx keyword spotting); fetched and hash-checked, not committed.
     implementation(files(wakeWordAar).builtBy(fetchWakeWordAssets))
+    // LiteRT (TensorFlow Lite) runs the openWakeWord "hey jarvis" models (downloaded on demand, D27).
+    implementation(libs.litert)
     implementation(libs.androidx.splashscreen)
     implementation(libs.room.runtime)
     ksp(libs.room.compiler)

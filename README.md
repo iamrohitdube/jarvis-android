@@ -3,13 +3,26 @@
 A hands-free personal AI assistant for Android, powered by Claude. It runs on the phone only, with no backend
 server. You bring your own Anthropic API key.
 
-> **Status: Phase 5 ("Hey Jarvis" wake word).** You can chat with Claude by text, with streamed replies, and ask about your
-> INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server. Chats are saved and searchable on the
-> phone, recent portfolio data is reused with a "last updated" label, there's an audit log, and sensitive
-> answers need your JARVIS PIN or fingerprint. There's no voice,
-> wake word or riding mode yet. See [PROGRESS.md](PROGRESS.md) and the phase plan in [CLAUDE.md](CLAUDE.md).
+> **Status: Phase 5 ("Hey Jarvis" wake word).** Say "Hey Jarvis" with the phone on the table, locked or in your
+> pocket, and have a spoken conversation with Claude. You can also chat by text. JARVIS can answer questions about
+> your INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server, after a spoken PIN or your
+> fingerprint. Riding mode comes next. See [PROGRESS.md](PROGRESS.md) and the phase plan in [CLAUDE.md](CLAUDE.md).
 
 ## Features in this build
+- **"Hey Jarvis", hands-free:**
+  - A small always-on wake model listens on the phone: no sounds, low battery, and no audio leaves the phone.
+  - The screen reacts at once: a full-screen black HUD with an animated arc-reactor orb, even over the lock screen.
+  - You can ask in one breath: "Hey Jarvis, what's the time?"
+  - Conversations continue until you say "thanks" or stay quiet for 15 seconds.
+  - In a pocket, JARVIS talks through your Bluetooth headset with the screen off.
+- **Teach JARVIS your voice:** a 2-minute on-phone training so it catches your accent and ignores conversation.
+  When it wakes by mistake, tap "Not for me" and it learns from that.
+- **Voice everywhere:** push-to-talk in chat, spoken replies sentence by sentence, barge-in, quiet mode, and a
+  customisable wake sound.
+- **Spoken PIN:** say "PIN", then your PIN, even with the phone locked or in a pocket. It's recognised on the phone.
+  Checking that it's your voice is optional.
+- **Instant answers:** the time, date and battery are answered on the phone, with no API call.
+- JARVIS HUD design: always dark, arc-reactor blue, frosted-glass cards.
 - Chat screen with streaming replies, a Stop button and plain-language errors with a fix button.
 - Secure settings. The Anthropic key and connector tokens are encrypted with the Android Keystore.
 - INDmoney through Claude's MCP connector:
@@ -52,7 +65,8 @@ server. You bring your own Anthropic API key.
 | Battery optimisation exemption (optional) | Stops battery savers from killing the wake-word listener. |
 | Modify audio settings | Routes pocket conversations through your Bluetooth headset. |
 | Default digital assistant (optional, you choose it in Android Settings) | Keeps "Hey Jarvis" working any time, even after a restart, with no taps. |
-| Spoken PIN models (optional download, ~70 MB) | Voice match + digit recognition, entirely on the phone. |
+| Wake model (download, 3.7 MB) | The "hey jarvis" detector (openWakeWord; models are CC BY-NC-SA 4.0, free for personal, non-commercial use). |
+| Spoken PIN models (optional download, ~70 MB) | Digit recognition and optional voice match, entirely on the phone. |
 | Run at startup | Only posts a "tap to resume listening" notification after a reboot. |
 | Notifications (Android 13+, optional) | Only to alert you if your JARVIS PIN gets locked. Asked when you set a PIN. |
 | Biometrics (no permission prompt) | Fingerprint or screen lock for sensitive answers, through Android's own prompt. |
@@ -81,5 +95,12 @@ CI (GitHub Actions) runs the unit tests, builds the APK and runs a gitleaks secr
 - [Keys and connectors setup](docs/setup-keys.md)
 - [Install](docs/install.md)
 
+## Credits
+- Wake word: [openWakeWord](https://github.com/dscripka/openWakeWord) by David Scripka. The code is Apache-2.0; the
+  pre-trained models are CC BY-NC-SA 4.0 and are downloaded by the app, not included here.
+- On-device speech: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0), Moonshine (MIT), 3D-Speaker
+  ERes2Net (Apache-2.0). TensorFlow Lite runtime: [LiteRT](https://ai.google.dev/edge/litert) (Apache-2.0).
+
 ## Licence
-Not chosen yet (see PROGRESS.md open questions).
+Not chosen yet (see PROGRESS.md open questions). The wake model's non-commercial licence applies to the downloaded
+models, not to this code.

@@ -57,12 +57,14 @@ data class AppSettings(
     val preferOnDeviceStt: Boolean = true,
     /** Text-to-speech rate, 1.0 = normal. */
     val speechRate: Float = 1.0f,
+    /** Spoken PIN also checks it's the owner's voice. Off by default (the user's choice, 2026-11-21). */
+    val voiceMatchForPin: Boolean = false,
     /** Always-on "Hey Jarvis" listening (foreground service). Off by default. */
     val wakeWordEnabled: Boolean = false,
     val wakeSensitivity: WakeSensitivity = WakeSensitivity.NORMAL,
     /** Microphone path for the wake word and spoken PIN (picked by "Compare microphones"). */
     val wakeMicSource: MicSource = MicSource.STANDARD,
-    val wakeEngine: WakeEngineChoice = WakeEngineChoice.PHONE,
+    val wakeEngine: WakeEngineChoice = WakeEngineChoice.HEY_JARVIS,
     /** Wake phrasings learned from the user's voice ("Teach JARVIS your voice"). */
     val learnedWakePhrases: List<String> = emptyList(),
     /** How JARVIS acknowledges the wake word. */
@@ -103,10 +105,11 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             speakReplies = p[SPEAK_REPLIES] ?: true,
             preferOnDeviceStt = p[ON_DEVICE_STT] ?: true,
             speechRate = p[SPEECH_RATE] ?: 1.0f,
+            voiceMatchForPin = p[VOICE_MATCH_PIN] ?: false,
             wakeWordEnabled = p[WAKE_WORD] ?: false,
             wakeSensitivity = p[WAKE_SENSITIVITY]?.let { runCatching { WakeSensitivity.valueOf(it) }.getOrNull() } ?: WakeSensitivity.NORMAL,
             wakeMicSource = p[WAKE_MIC]?.let { runCatching { MicSource.valueOf(it) }.getOrNull() } ?: MicSource.STANDARD,
-            wakeEngine = p[WAKE_ENGINE]?.let { runCatching { WakeEngineChoice.valueOf(it) }.getOrNull() } ?: WakeEngineChoice.PHONE,
+            wakeEngine = p[WAKE_ENGINE]?.let { runCatching { WakeEngineChoice.valueOf(it) }.getOrNull() } ?: WakeEngineChoice.HEY_JARVIS,
             learnedWakePhrases = p[WAKE_LEARNED]?.split("|")?.filter { it.isNotBlank() }.orEmpty(),
             wakeAck = p[WAKE_ACK]?.let { runCatching { dev.jarvis.voice.WakeAck.valueOf(it) }.getOrNull() } ?: dev.jarvis.voice.WakeAck.CHIME,
             wakeAckPhrase = p[WAKE_ACK_PHRASE] ?: "Yes?",
@@ -138,6 +141,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setSpeakReplies(v: Boolean) = store.edit { it[SPEAK_REPLIES] = v }
     suspend fun setPreferOnDeviceStt(v: Boolean) = store.edit { it[ON_DEVICE_STT] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[SPEECH_RATE] = v.coerceIn(0.5f, 2f) }
+    suspend fun setVoiceMatchForPin(v: Boolean) = store.edit { it[VOICE_MATCH_PIN] = v }
     suspend fun setWakeWordEnabled(v: Boolean) = store.edit { it[WAKE_WORD] = v }
     suspend fun setWakeSensitivity(v: WakeSensitivity) = store.edit { it[WAKE_SENSITIVITY] = v.name }
     suspend fun setWakeMicSource(v: MicSource) = store.edit { it[WAKE_MIC] = v.name }
@@ -162,6 +166,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val SPEAK_REPLIES = booleanPreferencesKey("speak_replies")
         val ON_DEVICE_STT = booleanPreferencesKey("prefer_on_device_stt")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
+        val VOICE_MATCH_PIN = androidx.datastore.preferences.core.booleanPreferencesKey("voice_match_pin")
         val WAKE_WORD = booleanPreferencesKey("wake_word_enabled")
         val WAKE_SENSITIVITY = stringPreferencesKey("wake_sensitivity")
         val WAKE_MIC = stringPreferencesKey("wake_mic_source")

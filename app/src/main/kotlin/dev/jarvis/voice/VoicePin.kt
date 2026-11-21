@@ -50,9 +50,13 @@ class VoicePinEngine(
     private val secrets: SecretStore,
     /** The microphone path picked in Settings (same as the wake word). */
     private val micSource: suspend () -> MicSource = { MicSource.STANDARD },
+    /** Whether a spoken PIN must also be the owner's voice (Security → Spoken PIN). */
+    private val requireVoiceMatch: suspend () -> Boolean = { true },
+    /** A second opinion on the digits from the phone's on-device recognizer (better with accents); null = Moonshine only. */
+    private val onDeviceRecognizer: (suspend (ShortArray) -> String?)? = null,
 ) : VoiceMatcher, SpokenPinSource {
 
-    override suspend fun ready(): Boolean = models.installed() && isEnrolled()
+    override suspend fun ready(): Boolean = models.installed() && (!requireVoiceMatch() || isEnrolled())
 
     override suspend fun isEnrolled(): Boolean = secrets.get(SecretKey.VOICE_PRINT) != null
 
@@ -64,11 +68,14 @@ class VoicePinEngine(
         true
     }
 
-    override suspend fun matches(recording: FloatArray): Boolean = withContext(Dispatchers.Default) {
-        val stored = secrets.get(SecretKey.VOICE_PRINT)?.let(::decode) ?: return@withContext false
-        if (recording.size < MIN_SAMPLES) return@withContext false
+    override suspend fun matches(recording: FloatArray): Boolean = (similarity(recording) ?: 0f) >= THRESHOLD
+
+    /** Voice-match score of [recording] against the stored voiceprint (null if none or too short). */
+    suspend fun similarity(recording: FloatArray): Float? = withContext(Dispatchers.Default) {
+        val stored = secrets.get(SecretKey.VOICE_PRINT)?.let(::decode) ?: return@withContext null
+        if (recording.size < MIN_SAMPLES) return@withContext null
         val probe = withSpeaker { embed(it, recording) }
-        cosine(stored, normalize(probe)) >= THRESHOLD
+        cosine(stored, normalize(probe))
     }
 
     override suspend fun remove(proof: StrongAuthProof) = secrets.remove(SecretKey.VOICE_PRINT)
@@ -76,10 +83,25 @@ class VoicePinEngine(
     override suspend fun capturePin(): SpokenPin {
         val audio = record() ?: return SpokenPin(null, voiceMatched = true) // nothing heard: "didn't catch", no penalty
         if (audio.size < MIN_SAMPLES) return SpokenPin(null, voiceMatched = true)
-        val voiceOk = matches(audio)
-        // A stranger's voice: don't even transcribe the PIN.
-        if (!voiceOk) return SpokenPin(null, voiceMatched = false)
-        return SpokenPin(recognizeDigits(audio), voiceMatched = true)
+        var score: Float? = null
+        if (requireVoiceMatch()) {
+            score = similarity(audio) ?: 0f
+            // A stranger's voice: don't even transcribe the PIN.
+            if (score < THRESHOLD) return SpokenPin(null, voiceMatched = false, similarity = score)
+        }
+        return SpokenPin(digitsOf(audio), voiceMatched = true, similarity = score)
+    }
+
+    /**
+     * The PIN digits, from two on-device recognizers: the phone's own (on-device only; usually better with accents)
+     * and Moonshine. The first clean answer (4-8 digits) wins; if both give digits, the phone's is preferred.
+     */
+    private suspend fun digitsOf(audio: FloatArray): String? {
+        val pcm = ShortArray(audio.size) { (audio[it] * 32767f).toInt().coerceIn(-32768, 32767).toShort() }
+        val phone = onDeviceRecognizer?.let { runCatching { it(pcm) }.getOrNull() }?.let { PinSpeech.digits(it) }
+        if (phone != null && phone.length in 4..8) return phone
+        val moon = recognizeDigits(audio)
+        return if (moon != null && moon.length in 4..8) moon else phone ?: moon
     }
 
     /** Records one utterance (for PIN or enrolment): starts when speech starts, ends after ~0.8 s of quiet. */
@@ -141,7 +163,13 @@ class VoicePinEngine(
         }
     }
 
-    private suspend fun recognizeDigits(audio: FloatArray): String? = withContext(Dispatchers.Default) {
+    /** General on-device transcription with Moonshine, if the spoken-PIN models are downloaded; else null. */
+    suspend fun transcribe(audio: FloatArray): String? =
+        if (!models.installed()) null else withContext(Dispatchers.Default) { runMoonshine(audio) }?.trim()?.takeIf { it.isNotEmpty() }
+
+    private suspend fun recognizeDigits(audio: FloatArray): String? = runMoonshine(audio)?.let { PinSpeech.digits(it) }
+
+    private suspend fun runMoonshine(audio: FloatArray): String? = withContext(Dispatchers.Default) {
         val dir = models.dir.absolutePath
         val recognizer = OfflineRecognizer(
             null,
@@ -163,7 +191,7 @@ class VoicePinEngine(
             try {
                 stream.acceptWaveform(audio, SAMPLE_RATE)
                 recognizer.decode(stream)
-                PinSpeech.digits(recognizer.getResult(stream).text)
+                recognizer.getResult(stream).text
             } finally {
                 stream.release()
             }
@@ -197,7 +225,11 @@ class VoicePinEngine(
         /** At least ~1 s of voiced audio for a usable voiceprint. */
         const val MIN_SAMPLES = SAMPLE_RATE
         /** Cosine similarity needed to accept the voice; sherpa-onnx examples use 0.5-0.6. Tune on the phone. */
-        const val THRESHOLD = 0.6f
+        /**
+         * Voice-match cut-off (cosine). sherpa-onnx examples use 0.5-0.6; 0.6 rejected the user's own voice on the
+         * wake screen (2026-11-21), so 0.5. The PIN is still required on top. Scores are in the audit log to calibrate.
+         */
+        const val THRESHOLD = 0.5f
 
         fun cosine(a: FloatArray, b: FloatArray): Float {
             if (a.size != b.size || a.isEmpty()) return 0f

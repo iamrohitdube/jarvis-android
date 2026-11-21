@@ -86,12 +86,12 @@ class AuthCoordinatorTest {
         assertEquals(DenyReason.CANCELLED, (r.await() as AccessResult.Denied).reason)
     }
 
-    @Test fun noAnswerInSixSecondsMeansFingerprintAndScreenOnly() = runTest {
+    @Test fun noAnswerInElevenSecondsMeansFingerprintAndScreenOnly() = runTest {
         setPin()
         val r = authorizeAsync(netWorth)
-        assertEquals(6, auth.prompt.value!!.defaultInSeconds)
-        advanceTimeBy(5_000); runCurrent()
-        assertEquals(AuthPrompt.Stage.CHOOSE, stage)
+        assertEquals(11, auth.prompt.value!!.defaultInSeconds)
+        advanceTimeBy(10_000); runCurrent()
+        assertEquals(AuthPrompt.Stage.CHOOSE, stage) // still waiting at 10 s
         advanceTimeBy(1_001); runCurrent()
         assertEquals(AuthPrompt.Stage.BIOMETRIC, stage)
         auth.onBiometricResult(BiometricOutcome.Success(AuthMethod.BIOMETRIC)); runCurrent()

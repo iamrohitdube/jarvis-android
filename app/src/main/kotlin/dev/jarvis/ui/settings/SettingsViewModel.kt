@@ -49,7 +49,92 @@ class SettingsViewModel @Inject constructor(
     private val recorder: dev.jarvis.voice.VoicePinEngine,
     private val stt: dev.jarvis.voice.Stt,
     private val cue: dev.jarvis.voice.WakeCue,
+    private val heyJarvis: dev.jarvis.voice.OpenWakeWordEngine,
+    private val models: dev.jarvis.voice.ModelDownloader,
 ) : ViewModel() {
+
+    /** openWakeWord model state: installed, and download progress (null = not downloading). */
+    val wakeModelReady = MutableStateFlow(models.installed(dev.jarvis.voice.OwwModelFiles.ALL))
+    val wakeModelProgress = MutableStateFlow<Float?>(null)
+    val wakeModelError = MutableStateFlow<String?>(null)
+
+    val hasPersonalCheck = MutableStateFlow(heyJarvis.hasVerifier())
+    val ownTrainPrompt = MutableStateFlow<String?>(null)
+    val ownTrainResult = MutableStateFlow<String?>(null)
+
+    /**
+     * "Teach JARVIS your voice" for the wake model: records "Hey Jarvis" 6 times, then a sentence of ordinary speech
+     * (with sound-alikes) and a few seconds of the room, and trains the personal check on the phone.
+     */
+    fun trainOwnVoice(context: android.content.Context) = viewModelScope.launch {
+        if (ownTrainPrompt.value != null) return@launch
+        if (!heyJarvis.isReady()) { ownTrainResult.value = "Download the wake model first."; return@launch }
+        ownTrainResult.value = null
+        wakeBus.micBusy.value = true
+        val wake = ArrayList<FloatArray>(); val other = ArrayList<FloatArray>()
+        try {
+            kotlinx.coroutines.delay(600) // let the listener release the mic
+            val wakeStyles = listOf(
+                "normally", "normally", "normally", "a bit quicker", "a bit quieter",
+                "with the phone at arm's length", "as if you're busy", "followed by a question (\"Hey Jarvis, what's the time?\")",
+            )
+            for ((i, style) in wakeStyles.withIndex()) {
+                ownTrainPrompt.value = "${i + 1}/${wakeStyles.size}: say \"Hey Jarvis\" $style"
+                wake += recorder.recordFor(if (i == wakeStyles.lastIndex) 3_500 else 2_200)
+                ownTrainPrompt.value = "Got it"
+                kotlinx.coroutines.delay(450)
+            }
+            val sentences = listOf(
+                "Hey Travis, have you seen the service van? The harvest jars are on the table.",
+                "I was just telling my friend about the match last night. It was a really close game.",
+                "Hey, can you call Jason? Ask Javier if we're still on for dinner on Friday.",
+                "Okay, so first we need groceries: rice, lentils, milk and bananas. Then we head home.",
+            )
+            for ((i, line) in sentences.withIndex()) {
+                ownTrainPrompt.value = "Read aloud (${i + 1}/${sentences.size}):\n\"$line\""
+                other += recorder.recordFor(7_500)
+                kotlinx.coroutines.delay(300)
+            }
+            ownTrainPrompt.value = "Now just talk normally for 15 seconds: your day, what you're doing, anything (don't say \"Jarvis\")."
+            other += recorder.recordFor(15_000)
+            ownTrainPrompt.value = "Now stay quiet for 4 seconds…"
+            other += recorder.recordFor(4_000)
+            ownTrainPrompt.value = "Learning your voice…"
+            val (r, peaks) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { heyJarvis.trainVerifier(wake, other) }
+            hasPersonalCheck.value = true
+            ownTrainResult.value = "Done. The standard model scored your \"Hey Jarvis\" %.2f–%.2f. ".format(peaks.minOrNull() ?: 0f, peaks.maxOrNull() ?: 0f) +
+                "Your personal check recognises ${r.positivesAccepted}/${r.positives} of your samples and ignores " +
+                "${(100 * r.negativesRejected / r.negatives.coerceAtLeast(1))}% of your other speech."
+        } catch (e: Exception) {
+            ownTrainResult.value = "Training failed: ${e.message ?: e.javaClass.simpleName}"
+        } finally {
+            ownTrainPrompt.value = null
+            wakeBus.micBusy.value = false
+        }
+        if (repo.current().wakeWordEnabled) runCatching { dev.jarvis.service.ListeningService.restart(context) }
+    }
+
+    fun removeOwnVoice(context: android.content.Context) = viewModelScope.launch {
+        heyJarvis.removeVerifier()
+        hasPersonalCheck.value = false
+        ownTrainResult.value = "Personal voice check removed."
+        if (repo.current().wakeWordEnabled) runCatching { dev.jarvis.service.ListeningService.restart(context) }
+    }
+
+    fun downloadWakeModel(context: android.content.Context) = viewModelScope.launch {
+        if (wakeModelProgress.value != null) return@launch
+        wakeModelError.value = null
+        wakeModelProgress.value = 0f
+        try {
+            models.download(dev.jarvis.voice.OwwModelFiles.ALL).collect { p -> wakeModelProgress.value = p.done.toFloat() / p.total }
+            wakeModelReady.value = models.installed(dev.jarvis.voice.OwwModelFiles.ALL)
+            if (repo.current().wakeWordEnabled) runCatching { dev.jarvis.service.ListeningService.restart(context) }
+        } catch (e: Exception) {
+            wakeModelError.value = "Download failed: ${e.message ?: e.javaClass.simpleName}. Check the connection and try again."
+        } finally {
+            wakeModelProgress.value = null
+        }
+    }
 
     /** Training state: the current prompt (null = not training) and the result summary. */
     val trainingPrompt = MutableStateFlow<String?>(null)
@@ -191,6 +276,8 @@ class SettingsViewModel @Inject constructor(
     val wakeTesting = MutableStateFlow(false)
 
     /** Records one utterance and runs the detector on it, so we can tell voice vs. live-audio problems apart. */
+    private var lastTestScore = 0f
+
     fun testWakeWord() = viewModelScope.launch {
         if (wakeTesting.value) return@launch
         wakeTesting.value = true
@@ -207,8 +294,23 @@ class SettingsViewModel @Inject constructor(
             while (i < raw.size) { val e = minOf(i + 1600, raw.size); peak = maxOf(peak, dev.jarvis.voice.EnergyGate.rms(raw.copyOfRange(i, e))); i = e }
             val (boosted, gain) = dev.jarvis.voice.AutoGain.normalize(raw)
             val sensitivity = repo.current().wakeSensitivity
+            val useOww = repo.current().wakeEngine == dev.jarvis.voice.WakeEngineChoice.HEY_JARVIS
             val hit = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                runCatching { wakeEngine.spot(boosted, sensitivity) }.getOrElse { "error: ${it.javaClass.simpleName}" }
+                runCatching {
+                    if (useOww) {
+                        if (!heyJarvis.isReady()) "error: download the wake model first"
+                        else {
+                            val score = heyJarvis.bestScore(raw)
+                            lastTestScore = score
+                            heyJarvis.spot(raw, sensitivity)
+                        }
+                    } else wakeEngine.spot(boosted, sensitivity)
+                }.getOrElse { "error: ${it.javaClass.simpleName}" }
+            }
+            if (useOww && hit == null) {
+                wakeTest.value = "Not recognised (score %.2f; needs %.2f). Try again, a bit closer or louder."
+                    .format(lastTestScore, dev.jarvis.voice.OpenWakeWordEngine.thresholdOf(sensitivity))
+                return@launch
             }
             val loud = "mic loudness %.4f, boosted %.0fx".format(peak, gain)
             wakeTest.value = when {

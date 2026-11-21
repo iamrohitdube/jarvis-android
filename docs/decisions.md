@@ -425,3 +425,71 @@ The user asked to say the PIN out loud. CLAUDE.md section 6 requires "spoken PIN
   - If the question came in the same breath, or quiet mode is on, only the sound plays.
   - On a Bluetooth call route (pocket mode), the sound uses the voice-communication stream, so it should reach
     the headset.
+
+
+## D27: Wake word = openWakeWord "hey jarvis" plus a personal voice check, 2026-11-21
+- **Why the change.** The phone-recognizer engine (D25) ran full recognition sessions back to back. On the user's
+  phone (Android System Intelligence) every session played an "open"/"failure" sound, so it beeped every ~5 s, and
+  vivo's audio policy kept the proximity sensor on. It also cost the most battery. "Hey Siri"/"Hey Google" use a small
+  always-on keyword model instead; Android's always-on hotword API is limited to system apps.
+- **Engine.** openWakeWord (github.com/dscripka/openWakeWord) with its pre-trained `hey_jarvis_v0.1` model. The
+  streaming pipeline from `utils.py`/`model.py` is ported to Kotlin (`OwwStream`):
+  - every 80 ms: mel of 1280 + 480 context samples (`x/10 + 2`);
+  - one embedding from the last 76 mel frames;
+  - a score from the last 16 embeddings;
+  - the first 5 scores are zeroed.
+  On 48 synthetic clips the port matched the official Python package to within 0.08 (the gap is the random warm-up
+  noise): it woke on 12/12 "hey jarvis", and at threshold 0.5 its only false wakes were "Hey Travis" (2/36).
+- **Runtime:** LiteRT 2.3.2 (TensorFlow Lite) runs the .tflite models on one CPU thread.
+  - ONNX Runtime was ruled out because sherpa-onnx bundles its own `libonnxruntime.so` (1.28.2, not on Maven).
+  - LiteRT's Java Interpreter prepares a model on load, and the mel model's placeholder input is 1 sample, which
+    can't be prepared. So the hash-verified file is loaded into memory with its input shape set to `[1, 1760]`
+    (byte offset pinned for v0.5.1). The file on disk is unchanged.
+- **Licences.** The code is Apache-2.0. The pre-trained models are **CC BY-NC-SA 4.0** (non-commercial). So they're
+  downloaded on demand (3.7 MB, pinned SHA-256, Settings → Hey Jarvis), never committed or bundled. Attribution is
+  shown in Settings.
+- **Silence gate.** The models run only while there's sound. The mic is the plain `MIC` source, so there are no
+  recognizer sessions, no sounds and no proximity sensor. Measured idle CPU: ~0%.
+- **Personal voice check ("Teach JARVIS your voice")**, the same idea as openWakeWord's custom verifier models:
+  - **What it is:** logistic regression over the model's own 16x96 features, trained on the phone.
+  - **What it's trained on:** 8 "Hey Jarvis" said different ways (each at 4 time offsets), 4 read sentences full of
+    sound-alikes, 15 s of free talk and 4 s of silence.
+  - **How waking works with it:** the base model only nominates (score >= half the user's weakest training wake,
+    floor 0.05), and the check decides (>= 0.7/0.8/0.9 by sensitivity).
+  - **Training details:** class-balanced, L2 0.3, with the step size from a power-iteration estimate of the largest
+    curvature.
+  - **Simulation with real features:** the "user's" held-out wakes scored 0.99, while their "Hey Travis"/"Hey,
+    service" scored 0.00.
+  - **"Not for me"** on the wake screen adds that moment's features as hard negatives (weighted 3x) and retrains.
+  - **Storage:** only feature numbers are kept (no audio), in no-backup app storage.
+- **Instant reaction.** The wake is reported at once (screen in ~0.1-0.5 s) while the same mic keeps recording what
+  follows, until ~0.65 s of quiet (relative to the room level measured before the wake). So "Hey Jarvis, what's the
+  time?" works in one breath. In a pocket the wake sound plays at once; in hand it waits until the question is
+  recorded, so it isn't recorded with it.
+
+## D28: Voice conversation, transcription and spoken PIN changes (user requests), 2026-11-21
+- **Continuous conversation.** After answering, JARVIS keeps listening with the conversation as context (last 6
+  exchanges), and sleeps after 15 s of silence or on "stop / that's all / thanks / bye / go to sleep / never mind".
+- **Silent waiting.** It waits for speech on JARVIS's own mic and only then transcribes, so waiting makes no
+  recognizer sounds.
+- **Transcription.** Recordings go to the phone's recognizer (Android 13+ `EXTRA_AUDIO_SOURCE`), then to on-device
+  Moonshine if that fails. On the user's phone, Android System Intelligence started answering everything with
+  "no speech". `EXTRA_BIASING_STRINGS` was removed: on that recognizer it returned "no speech" for clear answers.
+- **"PIN or fingerprint?"**
+  - The answer window is 11 s instead of 6 s (the user asked for +5 s; 6 s included asking the question).
+  - The answer is a fixed 3.5 s recording, so a quiet "PIN" isn't missed, and JARVIS asks once more if unclear.
+  - More spellings of "PIN" are accepted.
+- **Voice match for the spoken PIN is now optional, off by default**, at the user's request. This deviates from
+  CLAUDE.md section 6, which says "spoken PIN + voice match".
+  - Turning it off needs a fingerprint or screen lock, and the change is audited.
+  - With it on, the cut-off is 0.5 instead of 0.6 (the user's own voice was rejected at 0.6), and the score is
+    audited for calibration.
+  - Enrolment is now 5 phrases.
+- **Spoken PIN with the phone locked or hands-free.** This deviates from D21 (private data needed the phone in hand).
+  - Hands-free, a private question now goes straight to "Say your PIN." if spoken PIN is set up and not locked out.
+  - An answer unlocked by PIN this turn may be spoken while locked. CLAUDE.md forbids speaking Tier 1/2 data while
+    locked *without the required auth*, and the PIN path is "result spoken AND shown".
+  - Fingerprint answers stay screen-only.
+  - The 3-strike lockout is unchanged, and only biometrics can reset it.
+- **PIN digits** come from the phone's on-device recognizer (never a cloud one) and Moonshine; the first clean 4-8
+  digit answer is used.

@@ -11,7 +11,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 
 /** One push-to-talk recognition session, as events. */
 sealed interface SttEvent {
@@ -35,6 +37,10 @@ interface Stt {
     fun listen(preferOnDevice: Boolean, maxResults: Int): Flow<SttEvent> = listen(preferOnDevice)
     /** Stop listening and recognise what was said so far (the user tapped "done"). */
     fun stopListening()
+    /** Transcribes a 16 kHz mono recording; null if unsupported or nothing recognised. */
+    suspend fun transcribe(pcm: ShortArray, preferOnDevice: Boolean): String? = null
+    /** Like [transcribe] but only with the on-device recognizer; null if the phone has none (for spoken PINs). */
+    suspend fun transcribeOnDeviceOnly(pcm: ShortArray): String? = null
 }
 
 /**
@@ -99,12 +105,67 @@ class AndroidStt(private val context: Context) : Stt {
         }
     }.flowOn(Dispatchers.Main)
 
+    /**
+     * Feeds a recording to the recognizer through a pipe (EXTRA_AUDIO_SOURCE, Android 13+), so a question said in
+     * the same breath as "Hey Jarvis" isn't lost. Recognizers that don't support audio sources fail fast (null).
+     */
+    override suspend fun transcribeOnDeviceOnly(pcm: ShortArray): String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && SpeechRecognizer.isOnDeviceRecognitionAvailable(context))
+            transcribe(pcm, preferOnDevice = true) else null
+
+    override suspend fun transcribe(pcm: ShortArray, preferOnDevice: Boolean): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || pcm.isEmpty()) return null
+        return kotlinx.coroutines.withTimeoutOrNull(8_000) {
+            callbackFlow<String?> {
+                val onDevice = preferOnDevice && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+                val r = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
+                val (readSide, writeSide) = android.os.ParcelFileDescriptor.createPipe()
+                r.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) = Unit
+                    override fun onBeginningOfSpeech() = Unit
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray?) = Unit
+                    override fun onEndOfSpeech() = Unit
+                    override fun onPartialResults(partialResults: Bundle?) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                    override fun onResults(results: Bundle?) { trySend(best(results)); close() }
+                    override fun onError(error: Int) { trySend(null); close() }
+                })
+                val intent = intent(1).apply {
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, readSide)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, android.media.AudioFormat.ENCODING_PCM_16BIT)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, 16_000)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                }
+                r.startListening(intent)
+                // Write the recording, then a second of silence so the recognizer ends the utterance, then close.
+                val writer = kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                    runCatching {
+                        android.os.ParcelFileDescriptor.AutoCloseOutputStream(writeSide).use { out ->
+                            val bytes = java.nio.ByteBuffer.allocate((pcm.size + 16_000) * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                            pcm.forEach { bytes.putShort(it) }
+                            out.write(bytes.array())
+                        }
+                    }
+                }
+                awaitClose {
+                    writer.cancel()
+                    runCatching { readSide.close() }
+                    r.cancel(); r.destroy()
+                }
+            }.flowOn(Dispatchers.Main).firstOrNull()
+        }
+    }
+
     private fun intent(maxResults: Int) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, maxResults.coerceIn(1, 10))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_LATENCY)
+            // No EXTRA_BIASING_STRINGS: on the user's phone (Android System Intelligence / SODA) it made recognition
+            // return "no speech" for clearly spoken answers (2026-11-21).
         }
     }
 
@@ -129,5 +190,9 @@ class AndroidStt(private val context: Context) : Stt {
     private companion object {
         /** API 31 error codes 12 (not supported), 13 (unavailable / not downloaded), 11 (service disconnected). */
         val RETRY_WITH_DEFAULT = setOf(11, 12, 13)
+        val BIAS_WORDS = arrayListOf(
+            "Jarvis", "net worth", "my net worth", "portfolio", "SIP", "SIPs", "mutual fund", "INDmoney",
+            "what's the time", "battery", "calendar", "lock", "PIN", "fingerprint",
+        )
     }
 }
