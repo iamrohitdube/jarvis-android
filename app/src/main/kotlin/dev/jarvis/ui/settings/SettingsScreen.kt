@@ -361,6 +361,12 @@ private fun WakeDiagnosticsPanel(vm: SettingsViewModel, s: AppSettings) {
     val lastHeard by vm.wake.lastHeard.collectAsStateWithLifecycle()
     if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) {
         Hint("Last heard: " + (lastHeard?.let { "\"$it\"" } ?: "nothing yet"))
+        val lastWake by vm.wake.lastWake.collectAsStateWithLifecycle()
+        val lastWakeAt by vm.wake.lastWakeAt.collectAsStateWithLifecycle()
+        lastWake?.let { w ->
+            val at = lastWakeAt?.let { java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalTime().withNano(0) }
+            Hint("Last woke on: \"$w\"" + (at?.let { " at $it" } ?: ""))
+        }
     }
     Hint("Speak near the phone: the mic level should move and the model should switch to \"Analysing\" while you talk.")
     val testResult by vm.wakeTest.collectAsStateWithLifecycle()

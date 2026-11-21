@@ -62,8 +62,29 @@ class WakePhraseTest {
 
     @Test fun strictNeedsAGreeting() {
         assertEquals("", WakePhrase.match("ok Jarvis", WakeSensitivity.STRICT))
+        assertNull(WakePhrase.match("Jarvis what time", WakeSensitivity.STRICT))
         assertNull(WakePhrase.match("I told Jarvis about it", WakeSensitivity.STRICT))
-        assertEquals("about it", WakePhrase.match("I told Jarvis about it", WakeSensitivity.NORMAL))
+    }
+
+    @Test fun nameMidConversationNeverWakes() {
+        for (s in listOf(WakeSensitivity.STRICT, WakeSensitivity.NORMAL)) {
+            assertNull(WakePhrase.match("I told Jarvis about it", s))
+            assertNull(WakePhrase.match("yeah hey jarvis is a cool name", s))
+        }
+        for (s in WakeSensitivity.entries) assertNull(WakePhrase.match("we watched iron man and jarvis was so cool", s))
+    }
+
+    @Test fun startOfUtteranceWakes() {
+        assertEquals("what's the time", WakePhrase.match("Jarvis what's the time", WakeSensitivity.NORMAL))
+        assertEquals("lights", WakePhrase.match("um hey Jarvis lights", WakeSensitivity.NORMAL))
+        assertEquals("about it", WakePhrase.match("I told Jarvis about it", WakeSensitivity.SENSITIVE))
+    }
+
+    @Test fun alternativesOnlyCountForTheExactName() {
+        // A lower guess with a near spelling or mid-sentence name doesn't wake.
+        assertNull(WakePhrase.matchAny(listOf("hey service", "hey jarviz", "hey travis"), WakeSensitivity.NORMAL))
+        assertNull(WakePhrase.matchAny(listOf("hey service", "a b c", "d e f", "hey jarvis"), WakeSensitivity.NORMAL)) // only next 2
+        assertEquals("go", WakePhrase.matchAny(listOf("hey service go", "hey jarvis go"), WakeSensitivity.NORMAL)?.question)
     }
 }
 
@@ -270,7 +291,7 @@ class WakeAckTest {
 class WakeTrainingTest {
     @org.junit.Test fun nBestAlternativeWakes() {
         org.junit.Assert.assertEquals("what time is it",
-            WakePhrase.matchAny(listOf("hey service what time is it", "hey jarvis what time is it"), WakeSensitivity.NORMAL))
+            WakePhrase.matchAny(listOf("hey service what time is it", "hey jarvis what time is it"), WakeSensitivity.NORMAL)?.question)
     }
     @org.junit.Test fun nearSpellingsWake() {
         org.junit.Assert.assertEquals("", WakePhrase.match("hey jarviz", WakeSensitivity.STRICT))
@@ -290,9 +311,10 @@ class WakeTrainingTest {
         val learned = listOf("hey service", "travis")
         org.junit.Assert.assertEquals("lights on", WakePhrase.match("Hey service, lights on", WakeSensitivity.STRICT, learned))
         org.junit.Assert.assertNull(WakePhrase.match("customer service", WakeSensitivity.STRICT, learned))
-        // Single-word learned phrases are ignored on Strict, used on Normal.
-        org.junit.Assert.assertNull(WakePhrase.match("travis", WakeSensitivity.STRICT, learned))
-        org.junit.Assert.assertEquals("", WakePhrase.match("travis", WakeSensitivity.NORMAL, learned))
+        org.junit.Assert.assertNull(WakePhrase.match("call hey service now", WakeSensitivity.NORMAL, learned)) // not at the start
+        // Single-word learned phrases only on Sensitive.
+        org.junit.Assert.assertNull(WakePhrase.match("travis", WakeSensitivity.NORMAL, learned))
+        org.junit.Assert.assertEquals("", WakePhrase.match("travis", WakeSensitivity.SENSITIVE, learned))
     }
     @org.junit.Test fun understoodCountsTopGuessOnly() {
         org.junit.Assert.assertEquals(1, WakeTraining.understood(listOf(listOf("hey jarvis"), listOf("hey service", "hey jarvis"))))

@@ -12,16 +12,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,7 +32,6 @@ import dev.jarvis.security.AuthMethod
 import dev.jarvis.security.AuthPrompt
 import dev.jarvis.security.BiometricGate
 import dev.jarvis.service.WakeBus
-import dev.jarvis.ui.icons.AppIcons
 import dev.jarvis.ui.security.AuthHost
 import dev.jarvis.ui.theme.JarvisTheme
 import dev.jarvis.voice.SpokenChoice
@@ -101,11 +93,21 @@ class WakeViewModel @Inject constructor(
     }
 
     fun interrupt() = conversation.interrupt()
+
+    /** Mic button: stop talking while speaking; finish listening while listening. */
+    fun micTapped() {
+        when (phase.value) {
+            WakePhase.SPEAKING -> conversation.interrupt()
+            WakePhase.LISTENING -> stt.stopListening()
+            else -> Unit
+        }
+    }
 }
 
 /**
- * The "Hey Jarvis" screen: drawn over whatever was showing (and over the lock screen), turns the screen on,
- * runs one voice exchange with the wake animation, then fades out and closes. Tap to stop talking; ✕ to close.
+ * The "Hey Jarvis" screen: full-screen black over everything (including the lock screen), with the system bars
+ * hidden; turns the screen on, runs one voice exchange with the wake animation, then fades out and closes.
+ * Tap anywhere to stop talking; ✕ to close.
  */
 @AndroidEntryPoint
 class WakeActivity : ComponentActivity() {
@@ -123,8 +125,16 @@ class WakeActivity : ComponentActivity() {
     private var launchedPromptId = -1L
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
+        // Immersive: nothing but black, the orb and words (swipe from an edge shows the bars briefly).
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
         bus.wakeScreenShown.value = true
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -152,10 +162,11 @@ class WakeActivity : ComponentActivity() {
                         interactionSource = remember { MutableInteractionSource() }, indication = null,
                     ) { if (phase == WakePhase.SPEAKING) vm.interrupt() },
                 ) {
-                    WakeAnimation(phase, level, transcript, reply)
-                    IconButton(onClick = { vm.interrupt(); finish() }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp)) {
-                        Icon(AppIcons.Close, "Close", tint = Color.White.copy(alpha = 0.8f))
-                    }
+                    WakeAnimation(
+                        phase, level, transcript, reply,
+                        onMic = vm::micTapped,
+                        onClose = { vm.interrupt(); finish() },
+                    )
                 }
                 AuthHost(auth)
             }

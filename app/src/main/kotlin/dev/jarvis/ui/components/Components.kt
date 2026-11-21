@@ -70,8 +70,8 @@ fun SettingsCard(
 ) {
     Surface(
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth().glass(MaterialTheme.shapes.large),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -93,8 +93,8 @@ fun SettingsCard(
 fun NavRow(title: String, icon: ImageVector, subtitle: String? = null, tint: Color = MaterialTheme.colorScheme.primary, onClick: () -> Unit) {
     Surface(
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onClick),
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth().glass(MaterialTheme.shapes.large).clickable(onClick = onClick),
     ) {
         Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             IconTile(icon, tint)

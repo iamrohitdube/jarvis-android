@@ -25,6 +25,9 @@ class WakeBus @Inject constructor() : dev.jarvis.voice.WakeDiagnostics, dev.jarv
     /** Last thing the phone-recognition listener heard (memory only, shown in Settings for troubleshooting). */
     val lastHeard = MutableStateFlow<String?>(null)
     override fun onHeard(text: String) { lastHeard.value = text.take(80) }
+    val lastWake = MutableStateFlow<String?>(null)
+    val lastWakeAt = MutableStateFlow<Long?>(null)
+    override fun onWake(text: String) { lastWake.value = text.take(80); lastWakeAt.value = System.currentTimeMillis() }
 
     val conversationActive = MutableStateFlow(false)
     val wakeScreenShown = MutableStateFlow(false)

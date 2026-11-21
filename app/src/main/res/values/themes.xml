@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="jarvis_navy">#FF0A0E17</color>
-    <color name="jarvis_light_bg">#FFF6F7FB</color>
+    <color name="jarvis_navy">#FF03060C</color>
 
-    <!-- Base window theme; Compose draws everything else. Light variant here, dark in values-night. -->
-    <style name="Theme.Jarvis" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/jarvis_light_bg</item>
+    <!-- Base window theme; Compose draws everything else. JARVIS is always dark (HUD look). -->
+    <style name="Theme.Jarvis" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/jarvis_navy</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 
-    <!-- "Hey Jarvis" wake screen: translucent so the animation draws over whatever was on screen. -->
+    <!-- "Hey Jarvis" wake screen: full-screen pure black (OLED pixels off), no window chrome. -->
     <style name="Theme.Jarvis.Wake" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
