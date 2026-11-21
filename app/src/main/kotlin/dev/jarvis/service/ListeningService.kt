@@ -51,6 +51,7 @@ import javax.inject.Inject
 class ListeningService : Service() {
     @Inject lateinit var keywordEngine: WakeWordEngine
     @Inject lateinit var phoneEngine: dev.jarvis.voice.SystemSpeechWakeEngine
+    @Inject lateinit var heyJarvisEngine: dev.jarvis.voice.OpenWakeWordEngine
     @Inject lateinit var pocket: PocketDetector
     @Inject lateinit var bus: WakeBus
     @Inject lateinit var settings: SettingsRepository
@@ -61,6 +62,10 @@ class ListeningService : Service() {
     @Inject lateinit var history: HistoryStore
     @Inject lateinit var device: AndroidBiometricAvailability
     @Inject @Headless lateinit var headlessAgent: AgentLoop
+    @Inject lateinit var voicePin: dev.jarvis.voice.VoicePinEngine
+    @Inject lateinit var voiceCapture: dev.jarvis.voice.VoiceCapture
+    @Inject lateinit var transcriber: dev.jarvis.voice.Transcriber
+    @Inject lateinit var auth: dev.jarvis.security.AuthCoordinator
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var loop: Job? = null
@@ -114,12 +119,16 @@ class ListeningService : Service() {
         }
     }
 
-    private suspend fun engine(): WakeWordEngine =
-        if (settings.current().wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) phoneEngine else keywordEngine
+    private suspend fun engine(): WakeWordEngine = when (settings.current().wakeEngine) {
+        dev.jarvis.voice.WakeEngineChoice.HEY_JARVIS -> heyJarvisEngine
+        dev.jarvis.voice.WakeEngineChoice.PHONE -> phoneEngine
+        dev.jarvis.voice.WakeEngineChoice.KEYWORD_MODEL -> keywordEngine
+    }
 
     private suspend fun listenLoop() {
         if (!engine().isReady()) {
-            bus.lastError.value = "The selected wake-word engine isn't available on this phone"
+            bus.lastError.value = if (settings.current().wakeEngine == dev.jarvis.voice.WakeEngineChoice.HEY_JARVIS)
+                "Download the wake model first (Settings → Hey Jarvis)" else "The selected wake-word engine isn't available on this phone"
             bus.status.value = WakeBus.Status.NOT_READY
             stopSelf()
             return
@@ -131,6 +140,7 @@ class ListeningService : Service() {
         } catch (e: Throwable) {
             // Never crash the app; report it in Settings → "Hey Jarvis" and stop cleanly.
             bus.lastError.value = "${e.javaClass.simpleName}: ${e.message?.take(120)}"
+            dev.jarvis.voice.dlog("listener: ERROR ${e.javaClass.simpleName}: ${e.message} at ${e.stackTrace.take(4).joinToString(" < ")}")
             bus.status.value = WakeBus.Status.ERROR
             stopSelf()
         }
@@ -139,8 +149,9 @@ class ListeningService : Service() {
     private suspend fun listenForever() {
         while (scope.isActive) {
             // Wait while the chat screen's push-to-talk owns the mic.
-            if (bus.micBusy.value) { bus.status.value = WakeBus.Status.PAUSED; bus.micBusy.first { !it }; continue }
+            if (bus.micBusy.value) { bus.status.value = WakeBus.Status.PAUSED; dev.jarvis.voice.dlog("listener: PAUSED (mic busy)"); bus.micBusy.first { !it }; continue }
             bus.status.value = WakeBus.Status.LISTENING
+            dev.jarvis.voice.dlog("listener: LISTENING")
             bus.lastError.value = null
             val current = settings.current()
             val engine = engine()
@@ -152,31 +163,66 @@ class ListeningService : Service() {
                     busy.onAwait { null }
                 }.also { coroutineContext.cancelChildren() } // stops the detector and frees the mic
             }
+            dev.jarvis.voice.dlog("listener: detector ended, detected=${detected != null}")
             if (detected != null) {
                 bus.heardCount.value += 1
+                bus.lastWakeFeatures.value = detected.features
                 bus.lastHeardAt.value = System.currentTimeMillis()
                 bus.status.value = WakeBus.Status.CONVERSATION
                 bus.modelActive.value = false
-                handleWake(detected.followUp?.takeIf { it.isNotBlank() })
+                // React at once; the question (said in the same breath) is recorded and transcribed meanwhile.
+                val question = scope.async {
+                    detected.followUp?.takeIf { it.isNotBlank() }
+                        ?: detected.followUpAudio?.await()?.let { transcribeFollowUp(it) }
+                }
+                handleWake(question, instant = detected.followUpAudio != null)
             }
         }
     }
 
-    private suspend fun handleWake(question: String?) {
+    /** The question said in the same breath as "Hey Jarvis": phone recognizer first, then on-device Moonshine. */
+    private suspend fun transcribeFollowUp(pcm: ShortArray): String? {
+        val text = transcriber.transcribe(pcm, settings.current().preferOnDeviceStt)
+        val q = dev.jarvis.voice.FollowUp.clean(text)
+        dev.jarvis.voice.dlog("wake: follow-up transcribed=${text != null}, usable=${q != null}")
+        return q
+    }
+
+    private suspend fun handleWake(pendingQuestion: kotlinx.coroutines.Deferred<String?>, instant: Boolean) {
         bus.conversationActive.value = true
         bus.wakeScreenShown.value = false
         try {
-            if (!pocket.inPocket() && showWakeScreen(question)) {
+            val inPocket = pocket.inPocket()
+            if (inPocket) { val routed = router.routeToHeadset(); tts.setCallRoute(routed) }
+            // In a pocket there's no screen, so the sound plays at once. In hand, the screen shows the wake at once and
+            // the sound waits until the question has been recorded (so it isn't recorded with it).
+            val soundPlayed = instant && inPocket && settings.current().wakeAck != dev.jarvis.voice.WakeAck.OFF
+            bus.wakeSoundPlayed.value = soundPlayed
+            if (soundPlayed) scope.launch { playWakeSound() }
+            // Keyword engines: the screen opens now and waits for the question; phone recognition already has it.
+            val question: String? = if (instant) null else pendingQuestion.await()
+            if (instant) bus.pendingQuestion.value = pendingQuestion
+            if (!inPocket && showWakeScreen(question)) {
                 // Give the screen a moment to appear; if it never does (alert ignored), carry on listening.
                 val shown = withTimeoutOrNull(SHOW_TIMEOUT_MS) { bus.wakeScreenShown.first { it } } != null
                 if (shown) withTimeoutOrNull(CONVERSATION_TIMEOUT_MS) { bus.conversationActive.first { !it } }
                 WakeNotifications.cancelWakeAlert(this)
             } else {
-                runHeadless(question)
+                runHeadless(if (instant) pendingQuestion.await() else question, soundPlayed)
             }
         } finally {
+            bus.pendingQuestion.value = null
             bus.conversationActive.value = false
+            tts.setCallRoute(false)
+            router.reset()
         }
+    }
+
+    /** The wake sound only (a spoken phrase, if chosen, comes once JARVIS knows whether a question followed). */
+    private suspend fun playWakeSound() {
+        val s = settings.current()
+        val plan = dev.jarvis.voice.AckPlan.of(s.wakeAck, s.wakeAckPhrase, preheard = true, speakReplies = s.speakReplies)
+        runCatching { cue.play(plan.copy(phrase = null), tts) }
     }
 
     /** Opens the wake screen over everything: directly if "Display over other apps" is allowed, else via a full-screen alert. */
@@ -191,14 +237,15 @@ class ListeningService : Service() {
     }
 
     /** Pocket mode: no screen. Talk through a Bluetooth headset if one is connected. */
-    private suspend fun runHeadless(question: String?) {
-        val routed = router.routeToHeadset()
-        tts.setCallRoute(routed)
+    private suspend fun runHeadless(question: String?, soundPlayed: Boolean) {
+        // No screen: a PIN prompt is answered by voice ("Say your PIN.").
+        val pinFlow = dev.jarvis.voice.VoicePinFlow(voicePin, tts, auth, settings)
+        val pinWatcher = scope.launch { auth.prompt.collect { p -> pinFlow.onPrompt(p, voiceTurn = true) } }
         try {
-            VoiceConversation(stt, tts, headlessAgent, history, settings, cue) { device.deviceLocked() }.runOnce(scope, question)
+            VoiceConversation(stt, tts, headlessAgent, history, settings, cue, voiceCapture, transcriber) { device.deviceLocked() }
+                .runOnce(scope, question, soundPlayed)
         } finally {
-            tts.setCallRoute(false)
-            router.reset()
+            pinWatcher.cancel()
         }
     }
 
@@ -207,7 +254,7 @@ class ListeningService : Service() {
         const val ACTION_STOP = "dev.jarvis.action.STOP_LISTENING"
         const val ACTION_RESTART = "dev.jarvis.action.RESTART_LISTENING"
         private const val SHOW_TIMEOUT_MS = 8_000L
-        private const val CONVERSATION_TIMEOUT_MS = 180_000L
+        private const val CONVERSATION_TIMEOUT_MS = 600_000L
 
         /** Call only while JARVIS is visible (Android 14+ rule for microphone services). */
         fun start(context: Context) {

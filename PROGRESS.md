@@ -1,13 +1,31 @@
 # PROGRESS
 
 ## Current phase
-**Phase 5: "Hey Jarvis" wake word.** On branch `phase-5-wake-word`; committed 2026-11-21 (not pushed yet).
-Latest build: **210 unit tests, 0 failures**; installed on the phone over Wi-Fi adb.
-**Device test pending** for accent training and the wake sound (D26). Phone recognition (D25) is confirmed
-waking ("sometimes works") and local time answers work.
-Phase 4: Voice. Device-tested and merged (PR #2, 2026-11-21).
+**Phase 5: "Hey Jarvis" wake word.** Work is split into stacked pull requests:
+- PR #3 `phase-5-wake-word`: wake word, pocket mode, spoken PIN.
+- PR #4 `ui-jarvis-hud`: JARVIS HUD redesign.
+- `wake-openwakeword`: openWakeWord engine, personal voice check, continuous conversation (D27, D28).
 
-## Phase 5: done (code), see D21
+Latest build: **248 unit tests, 0 failures**. Tested on the phone over Wi-Fi adb and the laptop speaker (see below).
+**Waiting for the user's own tests** of the spoken PIN with the phone locked and in a pocket, and of conversations.
+
+## openWakeWord branch: verified on the phone (2026-11-21)
+- [x] Speaker test with synthetic clips: 12/12 "hey jarvis" woke JARVIS; 0/10 near-misses woke it.
+  - No recognizer beeps while idle.
+  - vivo no longer turns on the proximity sensor.
+  - Idle CPU ~0%.
+- [x] "Hey Jarvis, what's the time?" in one breath answered "It's 1:48 PM."
+- [x] The wake screen appears ~0.1-0.5 s after the wake.
+- [x] Choosing "PIN" by voice reached the PIN step.
+- [ ] Spoken PIN unlock with the user's voice (locked and pocket).
+- [ ] Multi-turn conversation.
+- [ ] "Not for me" learning.
+- [ ] Battery over a few hours.
+
+## Phase 5: done (code), see D21, D24-D28
+- [x] openWakeWord "hey jarvis" engine (default) with a personal voice check and "Not for me" learning (D27)
+- [x] Instant wake reaction; question in the same breath; continuous conversation; silent waiting (D27, D28)
+- [x] Spoken PIN: voice match optional (default off), works locked and hands-free; 11 s answer window (D28)
 - [x] Wake-word engine: sherpa-onnx keyword spotting (free, Apache-2.0, on-device, no account). Porcupine dropped
   because its free tier ended (June 2026). The library and model are downloaded and hash-checked by Gradle, not
   committed.

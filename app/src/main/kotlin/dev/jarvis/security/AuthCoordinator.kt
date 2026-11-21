@@ -88,7 +88,7 @@ class AuthCoordinator(
     private sealed interface Action {
         data class Choose(val method: AuthMethod) : Action
         /** [spoken] = said out loud (then [voiceMatched] must be true for the PIN to be checked at all). */
-        data class Pin(val raw: String, val spoken: Boolean = false, val voiceMatched: Boolean = false) : Action
+        data class Pin(val raw: String, val spoken: Boolean = false, val voiceMatched: Boolean = false, val similarity: Float? = null) : Action
         data class Bio(val outcome: BiometricOutcome) : Action
         data class Confirm(val allow: Boolean) : Action
         data object Cancel : Action
@@ -102,7 +102,9 @@ class AuthCoordinator(
      * A PIN said out loud (CLAUDE.md: spoken PIN + voice match). If the voice didn't match, the PIN is not
      * checked at all (no oracle for a stranger) and the attempt doesn't count toward the lockout.
      */
-    fun submitSpokenPin(spoken: SpokenPin) { actions.trySend(Action.Pin(spoken.digits.orEmpty(), spoken = true, voiceMatched = spoken.voiceMatched)) }
+    fun submitSpokenPin(spoken: SpokenPin) {
+        actions.trySend(Action.Pin(spoken.digits.orEmpty(), spoken = true, voiceMatched = spoken.voiceMatched, similarity = spoken.similarity))
+    }
     fun onBiometricResult(outcome: BiometricOutcome) { actions.trySend(Action.Bio(outcome)) }
     fun confirm(allow: Boolean) { actions.trySend(Action.Confirm(allow)) }
     fun cancel() { actions.trySend(Action.Cancel) }
@@ -224,7 +226,8 @@ class AuthCoordinator(
                     show(AuthPrompt.Stage.PIN, tier, pinSet, pinLocked, bioOk, message)
                     when (val a = actions.receive()) {
                         is Action.Pin -> if (a.spoken && !a.voiceMatched) {
-                            audit(AuditCategory.AUTH, "voice_pin", "voice_mismatch", tier = tier, method = AuthMethod.PIN)
+                            audit(AuditCategory.AUTH, "voice_pin", "voice_mismatch", tier = tier, method = AuthMethod.PIN,
+                                detail = a.similarity?.let { "score %.2f".format(java.util.Locale.ROOT, it) })
                             message = VOICE_MISMATCH_MESSAGE
                             if (bioOk) method = AuthMethod.BIOMETRIC
                         } else when (val r = pin.verify(a.raw)) {
@@ -356,7 +359,8 @@ class AuthCoordinator(
     ) = audit.record(AuditEvent(category, action, outcome, tool = tool, tier = tier?.name, method = method?.name?.lowercase(), detail = detail))
 
     companion object {
-        const val CHOICE_TIMEOUT_MS = 6_000L
+        /** Time to answer "PIN or fingerprint?" before fingerprint is chosen (6 s in the spec; +5 s at the user's request, 2026-11-21). */
+        const val CHOICE_TIMEOUT_MS = 11_000L
         const val PROMPT_TIMEOUT_MS = 120_000L
         const val PIN_LOCKED_MESSAGE = "PIN is locked, use fingerprint."
         const val SCREEN_OFF = "screen_off"
