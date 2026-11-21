@@ -20,6 +20,8 @@ interface Tts {
     /** Stops now and drops the queue (barge-in, Stop, quiet mode). */
     fun stop()
     fun setRate(rate: Float)
+    /** Pocket mode with a Bluetooth headset: speak on the call route so audio follows the headset (HFP/LE Audio). */
+    fun setCallRoute(enabled: Boolean) {}
 }
 
 /**
@@ -90,6 +92,15 @@ class AndroidTts(context: Context) : Tts {
     }
 
     override fun setRate(rate: Float) { tts.setSpeechRate(rate.coerceIn(0.5f, 2f)) }
+
+    override fun setCallRoute(enabled: Boolean) {
+        tts.setAudioAttributes(if (enabled) callAttributes else attributes)
+    }
+
+    private val callAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
 
     private fun finished() {
         if (pending.decrementAndGet() <= 0) {

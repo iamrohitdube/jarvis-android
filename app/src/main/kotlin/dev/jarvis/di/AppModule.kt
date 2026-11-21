@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jarvis.agent.AgentLoop
+import dev.jarvis.agent.PhoneInfo
 import dev.jarvis.claude.AnthropicClient
 import dev.jarvis.claude.LlmClient
 import dev.jarvis.claude.UsageMeter
@@ -30,6 +31,15 @@ import dev.jarvis.security.AuthCoordinator
 import dev.jarvis.security.KeystoreSecretStore
 import dev.jarvis.security.PinAuthenticator
 import dev.jarvis.security.SessionManager
+import dev.jarvis.service.HeadsetAudioRouter
+import dev.jarvis.voice.HeadlessAccess
+import dev.jarvis.voice.ModelDownloader
+import dev.jarvis.voice.VoicePinEngine
+import dev.jarvis.voice.PocketDetector
+import dev.jarvis.voice.ProximityPocketDetector
+import dev.jarvis.voice.SherpaWakeWordEngine
+import dev.jarvis.voice.SystemSpeechWakeEngine
+import dev.jarvis.voice.WakeWordEngine
 import dev.jarvis.voice.AndroidStt
 import dev.jarvis.voice.AndroidTts
 import dev.jarvis.voice.Stt
@@ -53,6 +63,8 @@ private val Context.usageStore: DataStore<Preferences> by preferencesDataStore(n
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class SettingsStore
 /** Phase 1 usage log; only read once to import into Room (see UsageMeter.importLegacy). */
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class UsageStore
+/** The agent used hands-free (pocket/locked): private tools need the phone in hand (HeadlessAccess). */
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class Headless
 /** Process-lifetime scope for work that must not die with a screen (e.g. OAuth token exchange). */
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class AppScope
 
@@ -136,9 +148,59 @@ object AppModule {
     @Provides @Singleton
     fun stt(@ApplicationContext c: Context): Stt = AndroidStt(c)
 
+    /** The on-device keyword model (beta). Also used by the Settings "Test now" check. */
+    @Provides @Singleton
+    fun wakeWordEngine(@ApplicationContext c: Context): WakeWordEngine = SherpaWakeWordEngine(c)
+
+    /** "Hey Jarvis" via the phone's own speech recognizer (default). */
+    @Provides @Singleton
+    fun systemWakeEngine(stt: Stt, settings: SettingsRepository) =
+        SystemSpeechWakeEngine(stt, { settings.current().preferOnDeviceStt }, { settings.current().learnedWakePhrases })
+
+    @Provides @Singleton
+    fun pocketDetector(@ApplicationContext c: Context): PocketDetector = ProximityPocketDetector(c)
+
+    @Provides @Singleton
+    fun modelDownloader(@ApplicationContext c: Context, http: OkHttpClient) = ModelDownloader(c, http)
+
+    @Provides @Singleton
+    fun voicePinEngine(models: ModelDownloader, secrets: SecretStore, settings: SettingsRepository) =
+        VoicePinEngine(models, secrets) { settings.current().wakeMicSource }
+
+    @Provides @Singleton
+    fun headsetRouter(@ApplicationContext c: Context) = HeadsetAudioRouter(c)
+
+    @Provides @Singleton @Headless
+    fun headlessAgent(
+        llm: LlmClient,
+        connectors: Map<String, @JvmSuppressWildcards Connector>,
+        usage: UsageMeter,
+        auth: AuthCoordinator,
+        sessions: SessionManager,
+        settings: SettingsRepository,
+        device: AndroidBiometricAvailability,
+        snapshots: SnapshotStore,
+        audit: AuditLog,
+        @ApplicationContext c: Context,
+    ) = AgentLoop(
+        llm, connectors, usage,
+        access = HeadlessAccess(auth, sessions, { settings.current().security.sessions }, { device.deviceLocked() }),
+        snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
+    )
+
+    /** Battery level and charging state from the system (no permission needed). */
+    private fun phoneInfo(c: Context): PhoneInfo {
+        val bm = c.getSystemService(android.os.BatteryManager::class.java)
+        val pct = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+        return PhoneInfo(pct, bm?.isCharging)
+    }
+
     /** One TTS engine for the app: initialising it is slow. */
     @Provides @Singleton
     fun tts(@ApplicationContext c: Context): Tts = AndroidTts(c)
+
+    @Provides @Singleton
+    fun wakeCue(@ApplicationContext c: Context): dev.jarvis.voice.WakeCue = dev.jarvis.voice.AndroidWakeCue(c)
 
     @Provides @Singleton
     fun pinAuthenticator(secrets: SecretStore) = PinAuthenticator(secrets)
@@ -168,5 +230,9 @@ object AppModule {
         auth: AuthCoordinator,
         snapshots: SnapshotStore,
         audit: AuditLog,
-    ) = AgentLoop(llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit)
+        @ApplicationContext c: Context,
+    ) = AgentLoop(
+        llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
+        requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
+    )
 }

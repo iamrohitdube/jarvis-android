@@ -86,8 +86,19 @@ class AgentLoop(
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val snapshots: SnapshotStore? = null,
     private val audit: AuditSink = AuditSink.NONE,
+    /** Per-request context line (the phone's local time); null in tests that don't need it. */
+    private val requestContext: (() -> String)? = null,
+    /** Phone facts for on-device answers (battery); null disables battery answers. */
+    private val phoneInfo: (() -> PhoneInfo)? = null,
 ) {
     fun run(history: List<ChatTurn>, userText: String, settings: AppSettings): Flow<AgentEvent> = flow {
+        // Simple questions the phone can answer itself: no request to Claude (instant, free).
+        LocalAnswers.answer(userText, java.time.Instant.ofEpochMilli(clock()).atZone(zone), phoneInfo?.invoke())?.let { local ->
+            emit(AgentEvent.Routed(LOCAL_MODEL, emptyList()))
+            emit(AgentEvent.TextDelta(local))
+            emit(AgentEvent.Finished(local, Usage(), costUsd = 0.0, truncated = false, model = LOCAL_MODEL))
+            return@flow
+        }
         // Hard stop before spending anything once the local monthly estimate reaches the budget.
         if (settings.stopAtBudget && settings.monthlyBudgetUsd > 0) {
             val summary = UsageSummary.of(usageMeter.entries.first(), settings.monthlyBudgetUsd, Instant.ofEpochMilli(clock()), zone)
@@ -160,7 +171,10 @@ class AgentLoop(
 
         try {
             while (true) {
-                val request = PromptBuilder.build(route, trimmedHistory, question, servers, settings.serverFallback, paused, cachedData)
+                val request = PromptBuilder.build(
+                    route, trimmedHistory, question, servers, settings.serverFallback, paused, cachedData,
+                    context = requestContext?.invoke(),
+                )
                 var message: AssembledMessage? = null
                 try {
                     llm.stream(request).collect { ev ->
@@ -303,6 +317,8 @@ class AgentLoop(
 
     companion object {
         const val MAX_CONTINUATIONS = 3
+        /** Shown as the "model" for answers made on the phone. */
+        const val LOCAL_MODEL = "on-device"
         /** Completed turns resent per request (4 exchanges; context compaction lands in Phase 7). */
         const val MAX_HISTORY_TURNS = 8
         /** Older turns are clipped to this many characters when resent; the current question never is. */
@@ -316,6 +332,13 @@ class AgentLoop(
             history.takeLast(MAX_HISTORY_TURNS)
                 .dropWhile { it.role != ChatTurn.Role.USER }
                 .map { if (it.text.length > MAX_TURN_CHARS) it.copy(text = it.text.take(MAX_TURN_CHARS) + " […]") else it }
+
+        /** "Current local time: Fri 21 Nov 2026, 1:25 AM (Asia/Kolkata, UTC+05:30)." */
+        fun localTimeLine(now: java.time.ZonedDateTime = java.time.ZonedDateTime.now()): String {
+            val fmt = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM yyyy, h:mm a", java.util.Locale.ENGLISH)
+            val offset = now.offset.id.let { if (it == "Z") "+00:00" else it }
+            return "Current local time: ${fmt.format(now)} (${now.zone.id}, UTC$offset)."
+        }
 
         /** "just now", "4 min ago", "2 h ago". */
         fun ageLabel(ageMs: Long): String {

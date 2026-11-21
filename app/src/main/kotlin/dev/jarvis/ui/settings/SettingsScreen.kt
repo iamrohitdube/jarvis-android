@@ -2,6 +2,7 @@ package dev.jarvis.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -24,6 +26,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -44,7 +49,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import dev.jarvis.agent.Models
+import dev.jarvis.service.ListeningService
+import dev.jarvis.ui.components.ChipTone
+import dev.jarvis.ui.components.StatusChip
 import dev.jarvis.data.AppSettings
 import dev.jarvis.ui.components.Hint
 import dev.jarvis.ui.components.NavRow
@@ -86,6 +104,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSecurity: () -> Unit, vm: SettingsV
                 SectionLabel("Intelligence")
                 ModelSection(vm, it)
                 VoiceSection(vm, it)
+                WakeWordSection(vm, it)
                 SectionLabel("Spending")
                 BudgetSection(vm, it)
                 SectionLabel("Privacy")
@@ -144,6 +163,225 @@ fun VoiceSection(vm: SettingsViewModel, s: AppSettings) {
             Text("  Test voice")
         }
         Hint("Fingerprint answers are never read aloud, and nothing sensitive is spoken while the phone is locked.")
+    }
+}
+
+
+@Composable
+fun WakeWordSection(vm: SettingsViewModel, s: AppSettings) {
+    val context = LocalContext.current
+    var refresh by remember { mutableIntStateOf(0) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refresh++ }
+        lifecycle.lifecycle.addObserver(obs)
+        onDispose { lifecycle.lifecycle.removeObserver(obs) }
+    }
+    val overlayOk = remember(refresh) { android.provider.Settings.canDrawOverlays(context) }
+    val batteryOk = remember(refresh) {
+        context.getSystemService(android.os.PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
+    }
+    val micOk = remember(refresh) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result[Manifest.permission.RECORD_AUDIO] == true) {
+            vm.setWakeWordEnabled(true)
+            ListeningService.start(context)
+        }
+        refresh++
+    }
+    SettingsCard("\"Hey Jarvis\"", AppIcons.GraphicEq, subtitle = "Always-on wake word, recognised on the phone") {
+        ToggleRow(
+            "Listen for \"Hey Jarvis\"",
+            "Shows a notification while listening. Audio stays on the phone until you say it.",
+            s.wakeWordEnabled,
+        ) { on ->
+            if (on) {
+                val wanted = buildList {
+                    add(Manifest.permission.RECORD_AUDIO)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                permissions.launch(wanted.toTypedArray())
+            } else {
+                vm.setWakeWordEnabled(false)
+                ListeningService.stop(context)
+            }
+        }
+        val assistant = remember(refresh) { dev.jarvis.service.JarvisVoiceInteractionService.isDefaultAssistant(context) }
+        PermissionRow(
+            "Default digital assistant",
+            "Recommended. Keeps \"Hey Jarvis\" working anytime, even after a restart, with no taps. Replaces Gemini/Google Assistant.",
+            assistant,
+        ) {
+            val voice = Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS)
+            val defaults = Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+            runCatching { context.startActivity(voice) }.onFailure { runCatching { context.startActivity(defaults) } }
+        }
+        PermissionRow(
+            "Pop up over other apps", "Lets the \"Hey Jarvis\" screen appear over anything, even the lock screen.", overlayOk,
+        ) {
+            context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
+        }
+        PermissionRow(
+            "Don't stop in the background", "Battery savers can stop the listener; this keeps it running.", batteryOk,
+        ) {
+            context.startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
+        }
+        if (!micOk) Hint("Microphone permission is needed.")
+        if (s.wakeWordEnabled) WakeDiagnosticsPanel(vm, s)
+        Hint("In a pocket (proximity sensor covered) JARVIS answers by voice only, through your Bluetooth headset if one is connected. Private answers need the phone in hand.")
+    }
+}
+
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun WakeDiagnosticsPanel(vm: SettingsViewModel, s: AppSettings) {
+    val context = LocalContext.current
+    val status by vm.wake.status.collectAsStateWithLifecycle()
+    val level by vm.wake.level.collectAsStateWithLifecycle()
+    val active by vm.wake.modelActive.collectAsStateWithLifecycle()
+    val heard by vm.wake.heardCount.collectAsStateWithLifecycle()
+    val error by vm.wake.lastError.collectAsStateWithLifecycle()
+    val gain by vm.wake.gain.collectAsStateWithLifecycle()
+    // Log-ish scale so quiet mics still show movement: 0.0003 → ~0, 0.03 → full.
+    val meter by androidx.compose.animation.core.animateFloatAsState(
+        ((kotlin.math.log10(level.coerceAtLeast(0.0003f)) + 3.5f) / 2f).coerceIn(0f, 1f), label = "meter",
+    )
+
+    Text("Detector", style = MaterialTheme.typography.bodyLarge)
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        dev.jarvis.voice.WakeEngineChoice.entries.forEachIndexed { i, e ->
+            SegmentedButton(
+                selected = s.wakeEngine == e,
+                onClick = { vm.setWakeEngine(e) { if (s.wakeWordEnabled) runCatching { ListeningService.restart(context) } } },
+                shape = SegmentedButtonDefaults.itemShape(i, dev.jarvis.voice.WakeEngineChoice.entries.size),
+            ) { Text(e.label) }
+        }
+    }
+    if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) {
+        Hint(
+            "Uses your phone's speech recognition, so it works with your voice. More battery than the keyword model. " +
+                "With on-device recognition (Settings → Voice) speech stays on the phone; otherwise speech near the phone " +
+                "goes to your phone's recognizer (usually Google) while listening."
+        )
+    }
+    Text("Wake sound", style = MaterialTheme.typography.bodyLarge)
+    Hint("How JARVIS lets you know it heard \"Hey Jarvis\", even with the screen off.")
+    Column {
+        dev.jarvis.voice.WakeAck.entries.forEach { a ->
+            Row(Modifier.fillMaxWidth().clickable { vm.setWakeAck(a) }, verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.RadioButton(selected = s.wakeAck == a, onClick = { vm.setWakeAck(a) })
+                Text(a.label, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+    if (s.wakeAck == dev.jarvis.voice.WakeAck.VOICE || s.wakeAck == dev.jarvis.voice.WakeAck.CHIME_VOICE) {
+        var phrase by remember(s.wakeAckPhrase) { mutableStateOf(s.wakeAckPhrase) }
+        OutlinedTextField(
+            value = phrase,
+            onValueChange = { phrase = it.take(40); vm.setWakeAckPhrase(phrase) },
+            label = { Text("Phrase (e.g. Yes?, Hi, At your service)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    TextButton(onClick = vm::previewWakeAck) { Text("Play it") }
+    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) {
+        val prompt by vm.trainingPrompt.collectAsStateWithLifecycle()
+        val result by vm.trainingResult.collectAsStateWithLifecycle()
+        Text("Teach JARVIS your voice", style = MaterialTheme.typography.bodyLarge)
+        Hint("Say \"Hey Jarvis\" 3 times and \"Jarvis\" twice. JARVIS learns how your phone hears you, so it misses you less.")
+        Button(onClick = { vm.trainWakeWord(context) }, enabled = prompt == null) { Text(if (prompt == null) "Start training" else "Listening…") }
+        prompt?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+        result?.let { StatusMessage(it) }
+        if (s.learnedWakePhrases.isNotEmpty()) {
+            Text("Learned: tap ✕ to remove one that wakes JARVIS by mistake", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            s.learnedWakePhrases.forEach { phrase ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("\"$phrase\"", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { vm.removeLearnedPhrase(phrase) }) { Text("✕") }
+                }
+            }
+            TextButton(onClick = vm::clearLearnedPhrases) { Text("Forget all learned phrases") }
+        }
+        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+    Text("Sensitivity", style = MaterialTheme.typography.bodyLarge)
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        dev.jarvis.voice.WakeSensitivity.entries.forEachIndexed { i, w ->
+            SegmentedButton(
+                selected = s.wakeSensitivity == w,
+                onClick = { vm.setWakeSensitivity(w) { if (s.wakeWordEnabled) runCatching { ListeningService.restart(context) } } },
+                shape = SegmentedButtonDefaults.itemShape(i, dev.jarvis.voice.WakeSensitivity.entries.size),
+            ) { Text(w.name.lowercase().replaceFirstChar { it.uppercase() }) }
+        }
+    }
+    Hint(
+        if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) "Strict: only wakes on \"Hey/Hi Jarvis\". Normal/Sensitive: any sentence with \"Jarvis\"."
+        else "Missed often? Try Sensitive (always analysing, a bit more battery). Waking by itself? Try Strict."
+    )
+    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Text("Live check", style = MaterialTheme.typography.bodyLarge)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Listener", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        when (status) {
+            dev.jarvis.service.WakeBus.Status.LISTENING -> StatusChip("Listening", ChipTone.GOOD)
+            dev.jarvis.service.WakeBus.Status.CONVERSATION -> StatusChip("Talking", ChipTone.BRAND)
+            dev.jarvis.service.WakeBus.Status.PAUSED -> StatusChip("Paused (mic in use)")
+            dev.jarvis.service.WakeBus.Status.STARTING -> StatusChip("Starting")
+            dev.jarvis.service.WakeBus.Status.STOPPED -> StatusChip("Stopped", ChipTone.WARN)
+            dev.jarvis.service.WakeBus.Status.NOT_READY -> StatusChip("Not ready", ChipTone.BAD)
+            dev.jarvis.service.WakeBus.Status.ERROR -> StatusChip("Error", ChipTone.BAD)
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Mic level", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        androidx.compose.material3.LinearProgressIndicator(progress = { meter }, modifier = Modifier.width(120.dp))
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Microphone", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text(s.wakeMicSource.label, style = MaterialTheme.typography.bodyMedium)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Boost", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text("%.0fx".format(gain), style = MaterialTheme.typography.bodyMedium)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Model", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        if (active) StatusChip("Analysing speech", ChipTone.BRAND) else StatusChip("Idle (quiet)")
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Heard \"Hey Jarvis\"", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text("$heard time" + if (heard == 1) "" else "s", style = MaterialTheme.typography.bodyMedium)
+    }
+    error?.let { StatusMessage(it, error = true) }
+    val lastHeard by vm.wake.lastHeard.collectAsStateWithLifecycle()
+    if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) {
+        Hint("Last heard: " + (lastHeard?.let { "\"$it\"" } ?: "nothing yet"))
+    }
+    Hint("Speak near the phone: the mic level should move and the model should switch to \"Analysing\" while you talk.")
+    val testResult by vm.wakeTest.collectAsStateWithLifecycle()
+    val testing by vm.wakeTesting.collectAsStateWithLifecycle()
+    val canSave by vm.canSaveClip.collectAsStateWithLifecycle()
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = vm::testWakeWord, enabled = !testing) { Text(if (testing) "Listening…" else "Test now") }
+        OutlinedButton(onClick = { vm.compareMicrophones(context) }, enabled = !testing) { Text("Compare microphones") }
+        if (canSave && !testing) TextButton(onClick = { vm.saveTestClip(context) }) { Text("Save recording") }
+    }
+    testResult?.let { StatusMessage(it, error = it.startsWith("Not") || it.startsWith("Detector") || it.startsWith("Didn")) }
+}
+
+@Composable
+private fun PermissionRow(title: String, why: String, granted: Boolean, onFix: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Hint(why)
+        }
+        if (granted) StatusChip("Allowed", ChipTone.GOOD) else TextButton(onClick = onFix) { Text("Allow") }
     }
 }
 

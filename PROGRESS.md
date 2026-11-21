@@ -1,8 +1,59 @@
 # PROGRESS
 
 ## Current phase
-**Phase 4: Voice (push-to-talk).** Built on branch `phase-4-voice` (2026-11-21): **173 unit tests, 0 failures**,
-debug APK ~43 MB (SHA-256 `93f84c7a…4e1d0983`). **Device-tested (2026-11-21): works.** Pull request next.
+**Phase 5: "Hey Jarvis" wake word.** On branch `phase-5-wake-word`; committed 2026-11-21 (not pushed yet).
+Latest build: **210 unit tests, 0 failures**; installed on the phone over Wi-Fi adb.
+**Device test pending** for accent training and the wake sound (D26). Phone recognition (D25) is confirmed
+waking ("sometimes works") and local time answers work.
+Phase 4: Voice. Device-tested and merged (PR #2, 2026-11-21).
+
+## Phase 5: done (code), see D21
+- [x] Wake-word engine: sherpa-onnx keyword spotting (free, Apache-2.0, on-device, no account). Porcupine dropped
+  because its free tier ended (June 2026). The library and model are downloaded and hash-checked by Gradle, not
+  committed.
+- [x] `ListeningService`: microphone foreground service, persistent notification with Stop, pauses during
+  push-to-talk, resumes after each exchange; "Tap to resume" notification after a reboot
+- [x] Proximity sensor: one reading on wake; in-hand opens the wake screen, pocket runs audio-only
+- [x] Wake screen (`WakeActivity`): over other apps and the lock screen, turns the screen on; animation (orb
+  bloom, voice-reactive aurora, edge light, live words); tap to stop talking, ✕ to close; spoken
+  "PIN or fingerprint?"
+- [x] Pocket mode: Bluetooth headset routing (setCommunicationDevice); private questions refused out loud
+  (needs the phone in hand)
+- [x] Settings → "Hey Jarvis": toggle, "Pop up over other apps", "Don't stop in the background"
+- [x] Unit tests for pocket-mode access, proximity reading, and a full hands-free exchange with fakes
+- [x] "Anytime, no touch" (D22): JARVIS can be the default digital assistant. Android keeps it running and
+  restarts listening after a reboot with no tap; the assist gesture opens the wake screen too
+- [x] Standby: silence gate, so the wake-word model runs only while someone is talking (D22)
+- [x] Spoken PIN + voice match (D23): on-device only; 70 MB models downloaded on demand and hash-checked; voice
+  enrolment needs fingerprint; a stranger's voice never gets the PIN checked; typing always works
+- [x] Keyword model didn't recognise the user's voice; tried software gain and a microphone choice (D24)
+- [x] Default detector is now the phone's own speech recognizer (D25); keyword model kept as "beta"
+- [x] Time, date and battery answered on the phone with no Claude call; local time sent with every question (D25)
+- [x] Accent training: "Teach JARVIS your voice", n-best + near-spelling matching, learned phrases (D26)
+- [x] Wake sound: Silent / Chime / Hum / custom phrase / chime + phrase, with "Play it" (D26)
+
+## Phase 5: please test on your phone (after the build)
+0. New (D26): Settings → Hey Jarvis → Wake sound (pick one, "Play it"); "Teach JARVIS your voice" → Start
+   training; then lock the phone and check how often "Hey Jarvis" is caught, on the phone mic and the C40.
+1. Settings → "Hey Jarvis": turn it on (allow mic + notifications), tap Allow on "Pop up over other apps" and
+   "Don't stop in the background". A "Listening for Hey Jarvis" notification appears.
+2. Phone on the table, screen off: say "Hey Jarvis, what's the capital of France?" (pause after "Hey Jarvis").
+   The screen lights up with the animation, shows your words, answers out loud, then fades away.
+3. Phone in hand, unlocked, in another app: same thing over the app.
+4. "Hey Jarvis" → "what's my net worth?": it asks "PIN or fingerprint?" out loud; check fingerprint works on the
+   wake screen (also over the lock screen).
+5. Phone in a pocket with the C40 connected: "Hey Jarvis, what time is it in London?". It should answer
+   through the helmet with the screen off. Then ask for your net worth: it should say to take the phone out.
+6. False triggers: leave it on during TV or a conversation for a while; tell me if it fires on its own or
+   misses you often (sensitivity is tunable).
+7. Battery: leave it on for a few hours and check Settings → Battery for JARVIS.
+8. Reboot the phone: a "Tap to resume Hey Jarvis" notification should appear; tap it.
+9. While "Hey Jarvis" is on, the chat mic button still works.
+10. Settings → "Hey Jarvis" → Default digital assistant → choose JARVIS. Reboot: "Hey Jarvis" should work
+    without opening the app or tapping anything.
+11. Security → Spoken PIN → Download (70 MB), then Set up voice match (fingerprint, then read 3 digit phrases).
+    In a voice chat: "what's my net worth" → say "PIN" → "Say your PIN." → say it. It should unlock.
+    Ask someone else to say your PIN: it should say "That didn't sound like you" and switch to fingerprint.
 Design polish: merged (PR #1, 2026-11-21).
 
 ## Phase 4: done (code), see D20

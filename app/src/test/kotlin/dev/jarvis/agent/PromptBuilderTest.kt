@@ -120,6 +120,21 @@ class PromptBuilderTest {
         assertNull(req.body["mcp_servers"])
     }
 
+    @Test fun localTimeGoesOnTheQuestionNotTheCachedSystemPrompt() {
+        val route = ToolRouter.route("what's the time", settings)
+        val a = PromptBuilder.build(route, emptyList(), "what's the time", emptyList(), false, context = "Current local time: A.")
+        val b = PromptBuilder.build(route, emptyList(), "what's the time", emptyList(), false, context = "Current local time: B.")
+        assertEquals(a.body["system"], b.body["system"]) // cache prefix unchanged by the clock
+        val content = a.body["messages"]!!.jsonArray.last().jsonObject["content"]!!.jsonArray
+        assertEquals("Current local time: A.", content[0].jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("what's the time", content[1].jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun localTimeLineFormat() {
+        val t = java.time.ZonedDateTime.of(2026, 11, 21, 1, 25, 0, 0, java.time.ZoneId.of("Asia/Kolkata"))
+        assertEquals("Current local time: Sat 21 Nov 2026, 1:25 AM (Asia/Kolkata, UTC+05:30).", AgentLoop.localTimeLine(t))
+    }
+
     @Test fun mcpConfigToStringRedactsToken() {
         assertFalse(indmoney.toString().contains("tok-secret"))
     }

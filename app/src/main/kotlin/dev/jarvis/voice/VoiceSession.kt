@@ -127,8 +127,8 @@ class VoiceSession(
     }
 
     /** A failed turn: say so briefly (details are on screen). */
-    fun onFailed() {
-        if (voiceTurn && speakReplies) tts.speak(FAILED_LINE)
+    fun onFailed(line: String = FAILED_LINE) {
+        if (voiceTurn && speakReplies) tts.speak(line)
         endTurn()
     }
 

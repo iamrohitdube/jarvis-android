@@ -12,7 +12,11 @@ import dev.jarvis.security.AndroidBiometricAvailability
 import dev.jarvis.security.AuthCoordinator
 import dev.jarvis.security.AuthMethod
 import dev.jarvis.security.AuthPrompt
+import dev.jarvis.service.WakeBus
 import dev.jarvis.voice.SpokenChoice
+import dev.jarvis.voice.VoicePinEngine
+import dev.jarvis.voice.VoicePinFlow
+import kotlinx.coroutines.flow.first
 import dev.jarvis.voice.Stt
 import dev.jarvis.voice.SttError
 import dev.jarvis.voice.Tts
@@ -87,6 +91,8 @@ class ChatViewModel @Inject constructor(
     stt: Stt,
     private val tts: Tts,
     private val device: AndroidBiometricAvailability,
+    private val wakeBus: WakeBus,
+    voicePinEngine: VoicePinEngine,
     usageMeter: UsageMeter,
 ) : ViewModel() {
 
@@ -97,6 +103,9 @@ class ChatViewModel @Inject constructor(
     val voiceLevel: StateFlow<Float> = voice.level
     val voiceError: StateFlow<SttError?> = voice.error
     val sttAvailable: Boolean = stt.isAvailable()
+
+    /** Spoken PIN + voice match in voice turns (typing still works). */
+    private val voicePin = VoicePinFlow(voicePinEngine, tts, auth, settings, wakeBus.micBusy)
 
     /** Quiet mode = not speaking replies (screen only). */
     val quiet: StateFlow<Boolean> = settings.settings.map { !it.speakReplies }
@@ -155,6 +164,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch { auth.prompt.collect { p -> voicePin.onPrompt(p, voice.voiceTurn) } }
         // Whatever is visible while unlocked stays revealed afterwards (until an explicit "lock").
         viewModelScope.launch {
             combine(persisted, unlocked) { a, b -> a to b }.collect { (rows, open) ->
@@ -173,7 +183,17 @@ class ChatViewModel @Inject constructor(
             else -> {
                 if (busy.value) stop()
                 voice.bargeIn()
-                voice.startListening { heard -> send(heard, viaVoice = true) }
+                viewModelScope.launch {
+                    // Ask the "Hey Jarvis" listener to let go of the mic first, then listen.
+                    wakeBus.micBusy.value = true
+                    try {
+                        delay(MIC_HANDOVER_MS)
+                        voice.startListening { heard -> send(heard, viaVoice = true) }
+                        voice.state.first { it != VoiceState.LISTENING }
+                    } finally {
+                        wakeBus.micBusy.value = false
+                    }
+                }
             }
         }
     }
@@ -327,6 +347,7 @@ class ChatViewModel @Inject constructor(
     private companion object {
         const val LIVE_ID = -1L
         const val RECENT_IN_DRAWER = 12
+        const val MIC_HANDOVER_MS = 200L
         fun prettyModel(id: String): String = id.removePrefix("claude-").split("-").let { parts ->
             val name = parts.firstOrNull()?.replaceFirstChar { it.uppercase() } ?: id
             val version = parts.drop(1).joinToString(".")

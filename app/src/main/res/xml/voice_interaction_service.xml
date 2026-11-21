@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default digital assistant metadata (docs/decisions.md D22). -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="dev.jarvis.service.JarvisSessionService"
+    android:recognitionService="dev.jarvis.service.JarvisRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

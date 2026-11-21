@@ -10,6 +10,9 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import dev.jarvis.agent.Models
 import dev.jarvis.security.PolicyLevel
+import dev.jarvis.voice.MicSource
+import dev.jarvis.voice.WakeEngineChoice
+import dev.jarvis.voice.WakeSensitivity
 import dev.jarvis.security.SecuritySettings
 import dev.jarvis.security.SessionPolicy
 import dev.jarvis.security.ToolPolicy
@@ -54,6 +57,17 @@ data class AppSettings(
     val preferOnDeviceStt: Boolean = true,
     /** Text-to-speech rate, 1.0 = normal. */
     val speechRate: Float = 1.0f,
+    /** Always-on "Hey Jarvis" listening (foreground service). Off by default. */
+    val wakeWordEnabled: Boolean = false,
+    val wakeSensitivity: WakeSensitivity = WakeSensitivity.NORMAL,
+    /** Microphone path for the wake word and spoken PIN (picked by "Compare microphones"). */
+    val wakeMicSource: MicSource = MicSource.STANDARD,
+    val wakeEngine: WakeEngineChoice = WakeEngineChoice.PHONE,
+    /** Wake phrasings learned from the user's voice ("Teach JARVIS your voice"). */
+    val learnedWakePhrases: List<String> = emptyList(),
+    /** How JARVIS acknowledges the wake word. */
+    val wakeAck: dev.jarvis.voice.WakeAck = dev.jarvis.voice.WakeAck.CHIME,
+    val wakeAckPhrase: String = "Yes?",
     val onboarding: Map<OnboardingStep, StepStatus> = OnboardingStep.entries.associateWith { StepStatus.TODO },
 ) {
     val onboardingComplete: Boolean get() = onboarding.values.none { it == StepStatus.TODO }
@@ -89,6 +103,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             speakReplies = p[SPEAK_REPLIES] ?: true,
             preferOnDeviceStt = p[ON_DEVICE_STT] ?: true,
             speechRate = p[SPEECH_RATE] ?: 1.0f,
+            wakeWordEnabled = p[WAKE_WORD] ?: false,
+            wakeSensitivity = p[WAKE_SENSITIVITY]?.let { runCatching { WakeSensitivity.valueOf(it) }.getOrNull() } ?: WakeSensitivity.NORMAL,
+            wakeMicSource = p[WAKE_MIC]?.let { runCatching { MicSource.valueOf(it) }.getOrNull() } ?: MicSource.STANDARD,
+            wakeEngine = p[WAKE_ENGINE]?.let { runCatching { WakeEngineChoice.valueOf(it) }.getOrNull() } ?: WakeEngineChoice.PHONE,
+            learnedWakePhrases = p[WAKE_LEARNED]?.split("|")?.filter { it.isNotBlank() }.orEmpty(),
+            wakeAck = p[WAKE_ACK]?.let { runCatching { dev.jarvis.voice.WakeAck.valueOf(it) }.getOrNull() } ?: dev.jarvis.voice.WakeAck.CHIME,
+            wakeAckPhrase = p[WAKE_ACK_PHRASE] ?: "Yes?",
             onboarding = OnboardingStep.entries.associateWith { step ->
                 p[stepKey(step)]?.let { runCatching { StepStatus.valueOf(it) }.getOrNull() } ?: StepStatus.TODO
             },
@@ -117,6 +138,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setSpeakReplies(v: Boolean) = store.edit { it[SPEAK_REPLIES] = v }
     suspend fun setPreferOnDeviceStt(v: Boolean) = store.edit { it[ON_DEVICE_STT] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[SPEECH_RATE] = v.coerceIn(0.5f, 2f) }
+    suspend fun setWakeWordEnabled(v: Boolean) = store.edit { it[WAKE_WORD] = v }
+    suspend fun setWakeSensitivity(v: WakeSensitivity) = store.edit { it[WAKE_SENSITIVITY] = v.name }
+    suspend fun setWakeMicSource(v: MicSource) = store.edit { it[WAKE_MIC] = v.name }
+    suspend fun setWakeEngine(v: WakeEngineChoice) = store.edit { it[WAKE_ENGINE] = v.name }
+    suspend fun setWakeAck(v: dev.jarvis.voice.WakeAck) = store.edit { it[WAKE_ACK] = v.name }
+    suspend fun setWakeAckPhrase(v: String) = store.edit { it[WAKE_ACK_PHRASE] = v.trim().take(40) }
+    suspend fun setLearnedWakePhrases(v: List<String>) = store.edit { it[WAKE_LEARNED] = v.joinToString("|") { p -> p.replace("|", " ") } }
     suspend fun setStep(step: OnboardingStep, status: StepStatus) = store.edit { it[stepKey(step)] = status.name }
 
     private companion object {
@@ -134,6 +162,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val SPEAK_REPLIES = booleanPreferencesKey("speak_replies")
         val ON_DEVICE_STT = booleanPreferencesKey("prefer_on_device_stt")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
+        val WAKE_WORD = booleanPreferencesKey("wake_word_enabled")
+        val WAKE_SENSITIVITY = stringPreferencesKey("wake_sensitivity")
+        val WAKE_MIC = stringPreferencesKey("wake_mic_source")
+        val WAKE_ENGINE = stringPreferencesKey("wake_engine")
+        val WAKE_LEARNED = stringPreferencesKey("wake_learned_phrases")
+        val WAKE_ACK = stringPreferencesKey("wake_ack")
+        val WAKE_ACK_PHRASE = stringPreferencesKey("wake_ack_phrase")
         fun stepKey(step: OnboardingStep) = stringPreferencesKey("onboarding_${step.name.lowercase()}")
     }
 }

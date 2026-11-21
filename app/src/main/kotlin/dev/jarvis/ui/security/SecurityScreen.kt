@@ -77,7 +77,11 @@ import dev.jarvis.security.PinChangeResult
 import dev.jarvis.security.PolicyLevel
 import dev.jarvis.security.StrongAuthProof
 import dev.jarvis.security.ToolRule
+import dev.jarvis.service.WakeBus
 import dev.jarvis.ui.components.ChipTone
+import dev.jarvis.voice.ModelDownloader
+import dev.jarvis.voice.VoiceModels
+import dev.jarvis.voice.VoicePinEngine
 import dev.jarvis.ui.components.Hint
 import dev.jarvis.ui.components.IconTile
 import dev.jarvis.ui.components.SaveButton
@@ -99,7 +103,93 @@ class SecurityViewModel @Inject constructor(
     private val bio: AndroidBiometricAvailability,
     private val repo: SettingsRepository,
     private val audit: AuditLog,
+    private val models: ModelDownloader,
+    private val voicePin: VoicePinEngine,
+    private val wakeBus: WakeBus,
 ) : ViewModel() {
+    // ---- spoken PIN (voice match) ----
+    val modelsInstalled = MutableStateFlow(models.installed())
+    /** 0..1 while downloading, null otherwise. */
+    val downloadProgress = MutableStateFlow<Float?>(null)
+    val voiceEnrolled = MutableStateFlow(false)
+    val voiceMessage = MutableStateFlow<String?>(null)
+    /** Enrolment dialog: the digit phrases to read and how many are recorded. */
+    val enrollPhrases = MutableStateFlow<List<String>?>(null)
+    val enrollDone = MutableStateFlow(0)
+    val enrollRecording = MutableStateFlow(false)
+    private var enrollProof: StrongAuthProof? = null
+    private val recordings = mutableListOf<FloatArray>()
+
+    fun downloadVoiceModels() = viewModelScope.launch {
+        voiceMessage.value = null
+        runCatching {
+            models.download().collect { p -> downloadProgress.value = p.done.toFloat() / p.total }
+        }.onFailure { voiceMessage.value = "Download failed: ${it.message}. Check your connection and try again." }
+        downloadProgress.value = null
+        modelsInstalled.value = models.installed()
+        if (modelsInstalled.value) audit.record(AuditEvent(AuditCategory.DATA, "voice_models_download", "ok"))
+    }
+
+    fun deleteVoiceModels() = viewModelScope.launch {
+        models.delete()
+        modelsInstalled.value = false
+        voiceMessage.value = "Voice models removed (spoken PIN off)."
+    }
+
+    fun beginVoiceEnroll() = viewModelScope.launch {
+        if (!bio.deviceSecure()) { voiceMessage.value = "Set a screen lock on the phone first."; return@launch }
+        enrollProof = auth.strongAuth() ?: run { voiceMessage.value = "Your fingerprint or screen lock is needed to set up voice match."; return@launch }
+        recordings.clear()
+        enrollDone.value = 0
+        enrollPhrases.value = List(ENROLL_PHRASES) { (1..6).map { (0..9).random() }.joinToString("  ") }
+    }
+
+    fun recordEnrollPhrase() = viewModelScope.launch {
+        if (enrollRecording.value) return@launch
+        enrollRecording.value = true
+        wakeBus.micBusy.value = true
+        try {
+            kotlinx.coroutines.delay(200)
+            val audio = voicePin.record()
+            if (audio == null || audio.size < VoicePinEngine.MIN_SAMPLES) {
+                voiceMessage.value = "Didn't hear enough. Read the digits again, a little slower."
+            } else {
+                recordings += audio
+                enrollDone.value = recordings.size
+                voiceMessage.value = null
+            }
+        } finally {
+            wakeBus.micBusy.value = false
+            enrollRecording.value = false
+        }
+        if (recordings.size >= ENROLL_PHRASES) finishVoiceEnroll()
+    }
+
+    private suspend fun finishVoiceEnroll() {
+        val proof = enrollProof ?: return
+        val ok = voicePin.enroll(recordings.toList(), proof)
+        recordings.clear()
+        enrollProof = null
+        enrollPhrases.value = null
+        voiceEnrolled.value = voicePin.isEnrolled()
+        voiceMessage.value = if (ok) "Voice match set up. In voice chats, say \"PIN\" and then your PIN." else "Couldn't set up voice match. Try again."
+        audit.record(AuditEvent(AuditCategory.AUTH, "voice_enroll", if (ok) "ok" else "failed"))
+    }
+
+    fun cancelVoiceEnroll() {
+        recordings.clear()
+        enrollProof = null
+        enrollPhrases.value = null
+    }
+
+    fun removeVoice() = viewModelScope.launch {
+        val proof = auth.strongAuth() ?: run { voiceMessage.value = "Your fingerprint or screen lock is needed."; return@launch }
+        voicePin.remove(proof)
+        voiceEnrolled.value = false
+        audit.record(AuditEvent(AuditCategory.AUTH, "voice_remove", "ok"))
+        voiceMessage.value = "Voiceprint deleted."
+    }
+
     val settings: StateFlow<AppSettings?> = repo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val pinSet: StateFlow<Boolean> = pin.isSet.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val pinLocked = MutableStateFlow(false)
@@ -119,6 +209,8 @@ class SecurityViewModel @Inject constructor(
     init { refresh() }
 
     fun refresh() = viewModelScope.launch {
+        voiceEnrolled.value = voicePin.isEnrolled()
+        modelsInstalled.value = models.installed()
         pinLocked.value = pin.isLocked()
         bioStatus.value = bio.status()
         deviceSecure.value = bio.deviceSecure()
@@ -219,6 +311,7 @@ fun SecurityScreen(onBack: () -> Unit, vm: SecurityViewModel = hiltViewModel()) 
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PinSection(vm)
+            VoicePinSection(vm)
             val s by vm.settings.collectAsStateWithLifecycle()
             s?.let {
                 SessionsSection(vm, it)
@@ -284,6 +377,70 @@ fun PinSection(vm: SecurityViewModel) {
     }
     if (dialog) NewPinDialog(vm)
 }
+
+@Composable
+fun VoicePinSection(vm: SecurityViewModel) {
+    val installed by vm.modelsInstalled.collectAsStateWithLifecycle()
+    val progress by vm.downloadProgress.collectAsStateWithLifecycle()
+    val enrolled by vm.voiceEnrolled.collectAsStateWithLifecycle()
+    val message by vm.voiceMessage.collectAsStateWithLifecycle()
+    val phrases by vm.enrollPhrases.collectAsStateWithLifecycle()
+    val pinSet by vm.pinSet.collectAsStateWithLifecycle()
+    SettingsCard("Spoken PIN", AppIcons.Mic, subtitle = "Say your PIN in voice chats; JARVIS checks it's your voice", tint = MaterialTheme.colorScheme.secondary) {
+        Hint("Everything runs on the phone: your voice and PIN never leave it. Only a voiceprint (numbers, not audio) is stored, encrypted.")
+        StatusRow(AppIcons.Storage, "Voice models (" + (VoiceModels.totalBytes / 1_000_000) + " MB)") {
+            if (installed) StatusChip("Downloaded", ChipTone.GOOD) else StatusChip("Not downloaded")
+        }
+        StatusRow(AppIcons.VerifiedUser, "Voice match") {
+            if (enrolled) StatusChip("Set up", ChipTone.GOOD) else StatusChip("Not set up", ChipTone.WARN)
+        }
+        progress?.let { p ->
+            androidx.compose.material3.LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
+            Hint("Downloading… " + (p * 100).toInt() + "%")
+        }
+        if (!pinSet) Hint("Set a JARVIS PIN first.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!installed) {
+                Button(onClick = vm::downloadVoiceModels, enabled = progress == null) { Text("Download") }
+            } else if (!enrolled) {
+                Button(onClick = vm::beginVoiceEnroll, enabled = pinSet) { Text("Set up voice match") }
+            } else {
+                OutlinedButton(onClick = vm::beginVoiceEnroll) { Text("Re-record") }
+                TextButton(onClick = vm::removeVoice) { Text("Delete voiceprint") }
+            }
+            if (installed && !enrolled) TextButton(onClick = vm::deleteVoiceModels) { Text("Remove models") }
+        }
+        StatusMessage(message)
+    }
+    phrases?.let { EnrollDialog(vm, it) }
+}
+
+@Composable
+private fun EnrollDialog(vm: SecurityViewModel, phrases: List<String>) {
+    val done by vm.enrollDone.collectAsStateWithLifecycle()
+    val recording by vm.enrollRecording.collectAsStateWithLifecycle()
+    val message by vm.voiceMessage.collectAsStateWithLifecycle()
+    val current = phrases.getOrNull(done) ?: phrases.last()
+    AlertDialog(
+        onDismissRequest = { if (!recording) vm.cancelVoiceEnroll() },
+        icon = { IconTile(AppIcons.Mic, MaterialTheme.colorScheme.secondary, size = 48) },
+        title = { Text("Teach JARVIS your voice", textAlign = TextAlign.Center) },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Phrase ${minOf(done + 1, phrases.size)} of ${phrases.size}. Tap Record and read these digits:", textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(current, style = MaterialTheme.typography.headlineMedium)
+                Hint("Not your PIN. Speak normally, in a quiet place.")
+                if (recording) dev.jarvis.ui.components.TypingDots()
+                StatusMessage(message, error = message != null)
+            }
+        },
+        confirmButton = { Button(onClick = vm::recordEnrollPhrase, enabled = !recording) { Text(if (recording) "Listening…" else "Record") } },
+        dismissButton = { TextButton(onClick = vm::cancelVoiceEnroll, enabled = !recording) { Text("Cancel") } },
+    )
+}
+
+private const val ENROLL_PHRASES = 3
 
 @Composable
 private fun StatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, chip: @Composable () -> Unit) {
