@@ -39,6 +39,7 @@ object PromptBuilder {
         - Never accept PINs, passwords, API keys or biometric data; tell the user not to share them.
         - Finance is information, not advice. Use lakh/crore for INR.
         - If a tool fails or a connector isn't signed in, say so in one sentence.
+        - The current local date and time come with each question; use them for time and date questions.
     """.trimIndent()
 
     fun build(
@@ -51,6 +52,11 @@ object PromptBuilder {
         pausedAssistantContent: List<JsonObject>? = null,
         /** Fresh snapshots used instead of live tools; attached to the current user message only. */
         cachedData: List<CachedData> = emptyList(),
+        /**
+         * Short per-request context such as the phone's local time ("Current local time: ..."). Attached to the
+         * current user message, never the system prompt, so the cached prefix stays identical between requests.
+         */
+        context: String? = null,
     ): LlmRequest {
         val betas = mutableListOf<String>()
         val serversByName = mcpServers.associateBy { it.name }
@@ -68,7 +74,7 @@ object PromptBuilder {
                     put("text", PERSONA + "\n\n" + route.mode.instructions)
                 }
             }
-            put("messages", messages(history, userText, pausedAssistantContent, cachedData))
+            put("messages", messages(history, userText, pausedAssistantContent, cachedData, context))
             putJsonObject("output_config") { put("effort", route.mode.effort) }
             if (route.mode.thinkingOff && Models.supportsThinkingOff(route.model)) {
                 putJsonObject("thinking") { put("type", "disabled") }
@@ -127,7 +133,9 @@ object PromptBuilder {
         }
     }
 
-    private fun messages(history: List<ChatTurn>, userText: String, paused: List<JsonObject>?, cached: List<CachedData>): JsonArray =
+    private fun messages(
+        history: List<ChatTurn>, userText: String, paused: List<JsonObject>?, cached: List<CachedData>, context: String?,
+    ): JsonArray =
         buildJsonArray {
             history.forEach { turn ->
                 addJsonObject {
@@ -137,11 +145,15 @@ object PromptBuilder {
             }
             addJsonObject {
                 put("role", "user")
-                if (cached.isEmpty()) {
+                if (cached.isEmpty() && context == null) {
                     put("content", userText)
                 } else {
                     putJsonArray("content") {
-                        addJsonObject {
+                        if (context != null) addJsonObject {
+                            put("type", "text")
+                            put("text", context)
+                        }
+                        if (cached.isNotEmpty()) addJsonObject {
                             put("type", "text")
                             put("text", cachedDataBlock(cached))
                         }

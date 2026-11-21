@@ -31,3 +31,6 @@ client_secret*.json
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Downloaded third-party binaries (wake-word engine + model); fetched and hash-checked by Gradle
+third_party/

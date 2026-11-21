@@ -3,7 +3,7 @@
 A hands-free personal AI assistant for Android, powered by Claude. It runs on the phone only, with no backend
 server. You bring your own Anthropic API key.
 
-> **Status: Phase 4 (voice, push-to-talk).** You can chat with Claude by text, with streamed replies, and ask about your
+> **Status: Phase 5 ("Hey Jarvis" wake word).** You can chat with Claude by text, with streamed replies, and ask about your
 > INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server. Chats are saved and searchable on the
 > phone, recent portfolio data is reused with a "last updated" label, there's an audit log, and sensitive
 > answers need your JARVIS PIN or fingerprint. There's no voice,
@@ -47,6 +47,13 @@ server. You bring your own Anthropic API key.
 |---|---|
 | Internet | To call the Anthropic API and connector sign-in/refresh endpoints. |
 | Microphone | Push-to-talk: JARVIS listens only after you tap the mic. Speech is recognised on the phone when supported. |
+| Foreground service (microphone) | "Hey Jarvis": listens on the phone for the wake word while the notification shows. Off by default. |
+| Display over other apps (optional) | Lets the "Hey Jarvis" screen pop up over other apps and the lock screen. |
+| Battery optimisation exemption (optional) | Stops battery savers from killing the wake-word listener. |
+| Modify audio settings | Routes pocket conversations through your Bluetooth headset. |
+| Default digital assistant (optional, you choose it in Android Settings) | Keeps "Hey Jarvis" working any time, even after a restart, with no taps. |
+| Spoken PIN models (optional download, ~70 MB) | Voice match + digit recognition, entirely on the phone. |
+| Run at startup | Only posts a "tap to resume listening" notification after a reboot. |
 | Notifications (Android 13+, optional) | Only to alert you if your JARVIS PIN gets locked. Asked when you set a PIN. |
 | Biometrics (no permission prompt) | Fingerprint or screen lock for sensitive answers, through Android's own prompt. |
 

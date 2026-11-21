@@ -256,3 +256,172 @@ CLAUDE.md's level descriptions are short, so this is the exact interpretation, e
     `android.intent.action.TTS_SERVICE`, per the platform docs.
 - **Onboarding:** a new step 2, "Talk to JARVIS" (microphone permission + Test voice), so existing installs see the
   wizard once more.
+
+## D21. "Hey Jarvis" wake word (Phase 5, 2026-11-21)
+**Engine: sherpa-onnx keyword spotting, not Picovoice Porcupine.** CLAUDE.md planned Porcupine. Research on
+2026-11-20 found:
+- Picovoice told users that free-tier AccessKeys stop working after 30 June 2026, with "no non-commercial tier
+  planned".
+- Its FAQ now says it is B2B only.
+- Keys are validated online.
+
+The user asked for "whichever is free and optimised".
+- **sherpa-onnx** (k2-fsa, v2.0.2, Apache-2.0) with the `kws-zipformer-gigaspeech-3.3M` model:
+  - The model is Apache-2.0 per its model card.
+  - It needs no account and no training: "hey jarvis" is written in the model's BPE pieces (`▁HE Y ▁JA R VI S`;
+    all six are present in its vocabulary).
+  - It runs fully on the phone on one CPU thread.
+- **Cost:** about 33 MB of native libraries (ONNX Runtime + sherpa) plus a 5 MB int8 model, arm64 only. It is a
+  tiny streaming speech model rather than a dedicated wake-word network, so it may use somewhat more CPU. That
+  has to be measured on the phone.
+- **Backup behind the same `WakeWordEngine` interface:** openWakeWord `hey_jarvis`. Its pre-trained models are
+  CC BY-NC-SA, so they must not be committed to an Apache repo.
+- **Supply chain:** the library (50 MB AAR) and model (17.6 MB) are not committed. The Gradle task
+  `fetchWakeWordAssets` downloads them from the official GitHub releases into `third_party/` (gitignored),
+  checks pinned SHA-256 hashes, and extracts only the int8 encoder/decoder/joiner + tokens. A changed or tampered
+  download fails the build.
+- **APK:** `abiFilters = arm64-v8a`, so the APK doesn't carry four copies of the native libraries. This rules out
+  32-bit phones and x86 emulators.
+- **Keyword tuning:** boost 2.0 and threshold 0.25 are starting values, to tune on the phone for false triggers
+  against misses.
+
+**Android rules that shape the design** (official docs, checked 2026-11-20; see the research summary in this
+decision):
+- **Starting the mic service:** a microphone foreground service may only start while JARVIS is visible, or from a
+  notification tap, and never from BOOT_COMPLETED (Android 14+). So the listener starts from Settings or when
+  JARVIS is opened. After a reboot, a "Tap to resume" notification appears; a tap is an allowed start.
+- **Audio on Android 17:** background playback needs a foreground service with while-in-use capability. The mic
+  service started from the app has it, so text-to-speech in pocket mode keeps working.
+- **Showing the wake screen:** a foreground service is not a background-activity-launch exemption.
+  - With "Display over other apps" granted, `WakeActivity` opens directly over anything, including the lock
+    screen (`showWhenLocked` + `turnScreenOn` in the manifest).
+  - Otherwise JARVIS posts a full-screen-intent notification, which opens the screen when the phone is locked or
+    off and shows a heads-up while in use.
+  - Wake locks are not used to turn the screen on; that approach is deprecated.
+- **Default digital assistant:** the role (a VoiceInteractionService) would remove most of these limits: the system
+  keeps it running, it's exempt from the start restrictions, and it can restart listening after a reboot. It's
+  planned for Phase 5b, alongside the helmet button.
+
+**Flow:**
+1. The detector runs in `ListeningService`.
+2. On "Hey Jarvis" it stops (freeing the mic) and reads the proximity sensor once (≤ 400 ms, no continuous
+   battery use).
+3. Not covered: the wake screen opens. It's JARVIS's own animation: the orb blooms in, aurora waves follow the
+   voice, a light traces the screen edges, and the live transcript shows. One voice exchange runs (with the spoken
+   "PIN or fingerprint?" and normal PIN/fingerprint), then the screen fades out and listening resumes.
+4. Covered (pocket): no screen. The exchange is audio-only, routed through a connected Bluetooth headset with
+   `setCommunicationDevice` (Android 12+; classic HFP and LE Audio) and TTS on the call route. Private questions
+   can't be confirmed without the screen, and CLAUDE.md forbids speaking Tier 1/2 data on a locked phone, so the
+   headless agent uses `HeadlessAccess`: personal and sensitive tools are refused ("That's private. Take your
+   phone out and ask me again.") unless the phone is unlocked and a session is already valid. General questions
+   and public market data work normally.
+5. Push-to-talk in the chat screen asks the listener to release the mic first (`WakeBus.micBusy`).
+
+**Each "Hey Jarvis" exchange** is saved to History as its own conversation.
+
+**Verify on the phone:**
+- false triggers and missed detections
+- battery use over a few hours with the screen off
+- whether the wake screen opens over the lock screen (with and without the overlay permission)
+- whether the fingerprint prompt works over the lock screen
+- whether the C40 picks up the mic and speaker in pocket mode
+- whether a reboot leads to the "Tap to resume" notification
+
+## D22. "Hey Jarvis" anytime: default assistant role + standby gate (Phase 5, 2026-11-21)
+The user asked for the wake word to work without touching the phone, any time, with everything else on standby.
+- **Default digital assistant.** JARVIS ships a `VoiceInteractionService` (+ session service + a stub
+  `RecognitionService`, which the role still requires to be named) and an `ACTION_ASSIST` entry on the wake
+  screen. The user selects it once in Android Settings → Default apps → Digital assistant; the role isn't
+  requestable from the app. As role holder:
+  - the system keeps the service running and binds it with foreground priority;
+  - `onReady()` may start the microphone listener with no visible screen, including after a reboot (a documented
+    while-in-use exemption);
+  - JARVIS may open the wake screen from the background without the overlay permission;
+  - the assist gesture and lock-screen assist open the wake screen.
+
+  Cost: it replaces Gemini/Google Assistant. Without the role, the overlay permission + "tap to resume" fallbacks
+  from D21 still work.
+- **Standby.** Only the wake-word listener runs. The rest (agent, network, database) is idle until a wake word or
+  the user opens the app.
+- **Silence gate:** an `EnergyGate` in front of the keyword model. While it's quiet, each 100 ms chunk is only
+  measured for loudness and the model doesn't run. It opens when the level rises above max(floor, 3x the learned
+  background noise), replays a 300 ms pre-roll so the start of "Hey" isn't lost, and closes after 1.5 s of quiet
+  (resetting the model's stream). The noise floor is learned only while quiet, so a fan or traffic hum doesn't
+  keep it open. Silero VAD (MIT, 0.6 MB) is the upgrade path if the simple gate proves too eager or too strict.
+
+## D23. Spoken PIN with voice match (Phase 5, 2026-11-21)
+The user asked to say the PIN out loud. CLAUDE.md section 6 requires "spoken PIN + voice match", so:
+- **On-device only.** Android's `createOnDeviceSpeechRecognizer` doesn't officially guarantee that audio stays
+  on the phone (its reference still says implementations may stream to servers), so it isn't used for PINs.
+  JARVIS records the PIN itself (`AudioRecord`). The same samples go to:
+  - **voice match:** 3D-Speaker ERes2Net English (sherpa-onnx release, Apache-2.0, 26.5 MB, 192-dim, EER ~0.8-1%
+    on VoxCeleb1-O);
+  - **digits:** Moonshine tiny English v2 quantized (MIT for English models, 43.6 MB), then `PinSpeech`, which
+    turns "two five eight zero" / "2580" / "double five" into digits.
+- **Download on demand.** About 70 MB, fetched only when the user turns it on (Security → Spoken PIN), into
+  no-backup app storage. Each file is pinned by SHA-256. The Moonshine files come individually from the author's
+  Hugging Face repo at a pinned commit (Android can't unpack `.tar.bz2` natively); their hashes were verified as
+  identical to the official sherpa-onnx GitHub release archive. The speaker model comes from the GitHub release.
+- **Enrolment.** A fresh fingerprint or screen lock is required, like changing the PIN, so someone holding the
+  phone can't enrol their own voice. The user reads 3 random 6-digit phrases (not the PIN). The averaged,
+  normalised embedding is stored encrypted in `SecretStore` (`VOICE_PRINT`). No audio is kept.
+- **Verification:** cosine similarity ≥ 0.6 (sherpa-onnx examples use 0.5-0.6; to be calibrated on the phone).
+  At least 1 s of voiced audio is required.
+- **Rules (`AuthCoordinator.submitSpokenPin`):**
+  - voice didn't match: the PIN isn't transcribed or checked (no oracle for a stranger), it doesn't count toward
+    the 3-strike lockout, and JARVIS switches to fingerprint;
+  - voice matched + wrong PIN: counts as a wrong PIN;
+  - nothing heard or unclear: "didn't catch the PIN", no penalty;
+  - success: spoken and shown (PIN path).
+- **Flow (`VoicePinFlow`).** In a voice turn, after "PIN", JARVIS says "Say your PIN." and records. That's up to 3
+  spoken tries per authentication. Typing in the dialog always works. The flow is silent in quiet mode or until
+  spoken PIN is set up.
+- **Not available hands-free.** In a pocket or on a locked phone, private questions are refused (D21), so spoken
+  PINs only happen with the phone in hand (wake screen or chat).
+- **Privacy:** transcripts are never logged. `debug=false` on the native models. Audit entries record only
+  `voice_pin` outcomes.
+- **Training-data caveat:** both public speaker models are trained on VoxCeleb (YouTube-sourced). Fine for
+  personal use; noted for the public release.
+
+
+## D24: Wake-word audio fixes (software gain, microphone choice), 2026-11-21
+- **Problem.** On the user's phone the keyword model never fired. Their recordings were very quiet and muffled
+  (most of the energy below 300 Hz). The same engine worked on PC test clips.
+- **Tried:** `AutoGain` (software gain up to about 16x, driven by level), the platform `AutomaticGainControl`
+  effect, and a `MicSource` setting (standard, voice-recognition, call, camcorder, unprocessed) with a "Compare
+  microphones" test that picks the loudest. "Save recording" writes a WAV to Downloads for troubleshooting.
+- **Result:** louder audio, but still not recognised for this user. These tools stay for the keyword engine
+  (now "Keyword model (beta)").
+
+## D25: Default wake engine = the phone's own speech recognizer, 2026-11-21
+- **Choice.** `SystemSpeechWakeEngine` runs short back-to-back `SpeechRecognizer` sessions and wakes when the
+  transcript contains "Jarvis". The user chose this after the keyword model failed for their voice. Anything said
+  after the name in the same breath is passed on as the question.
+- **On-device recognizer preferred**, so audio stays on the phone. If the phone has none, or the user turns it
+  off, speech near the phone goes to the default recognizer (usually Google) while listening. Settings says so.
+- **Trade-offs:** more battery than a keyword model, and short gaps between sessions.
+- **The keyword model stays selectable** (Settings → Hey Jarvis → Detector).
+- **Phone-answered questions (`LocalAnswers`).** The time, the date/day and the battery are answered on the
+  phone with no Claude request (free, instant). Every other question carries a one-line local time and time zone
+  on the user message, which keeps the cached prompt prefix stable.
+
+## D26: Training on the user's accent, and a wake sound, 2026-11-21
+- **Why.** The phone recognizer sometimes hears "Jarvis" as something else ("service", "Travis"), so wakes were
+  missed.
+- **Matching:**
+  - the listener asks for up to 5 guesses (n-best) and checks all of them;
+  - it accepts near spellings (edit distance 1, starting with "ja", e.g. "jarviz").
+- **"Teach JARVIS your voice":**
+  - The user says "Hey Jarvis" x3 and "Jarvis" x2.
+  - Every guess of 1-3 words without the name becomes a learned phrase. Up to 20 are kept, stored in settings
+    (not secret: they're mishearings of "Jarvis").
+  - Phrases match only as whole word sequences, so "hey service" wakes JARVIS but "customer service" doesn't.
+  - One-word learned phrases are ignored on Strict.
+  - Each phrase can be removed.
+  - No audio is stored.
+- **Wake sound (`WakeCue`).** Options: Silent, Chime (default), Hum, a custom phrase, or chime + phrase.
+  - The sounds are made on the phone (no audio files) and played before the mic opens, so JARVIS doesn't hear
+    itself.
+  - If the question came in the same breath, or quiet mode is on, only the sound plays.
+  - On a Bluetooth call route (pocket mode), the sound uses the voice-communication stream, so it should reach
+    the headset.

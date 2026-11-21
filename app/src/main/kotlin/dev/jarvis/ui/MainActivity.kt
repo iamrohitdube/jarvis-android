@@ -1,6 +1,10 @@
 package dev.jarvis.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
+import androidx.core.content.ContextCompat
+import dev.jarvis.service.ListeningService
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -117,6 +121,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // The app is in front of an unlocked phone: that's the "recent unlock" Tier 1 needs (never Tier 2).
         if (!biometric.deviceLocked()) sessions.grant(AuthTier.PERSONAL, AuthMethod.DEVICE_UNLOCK)
+        // The microphone service may only start while JARVIS is visible (Android 14+), so (re)start it here.
+        lifecycleScope.launch {
+            if (settingsRepository.current().wakeWordEnabled &&
+                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            ) runCatching { ListeningService.start(this@MainActivity) }
+        }
     }
 }
 

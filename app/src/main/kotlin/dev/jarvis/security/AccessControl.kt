@@ -12,6 +12,8 @@ enum class DenyReason {
     LOCKED_OUT,
     /** No PIN set and no fingerprint/device credential on this phone. */
     NO_AUTH_AVAILABLE,
+    /** Hands-free with no screen (pocket or locked): private data needs the phone in hand. */
+    NEEDS_SCREEN,
 }
 
 sealed interface AccessResult {

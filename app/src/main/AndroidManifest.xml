@@ -7,6 +7,18 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Push-to-talk: the mic is used only while you hold a conversation turn. Asked for on first mic tap. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- "Hey Jarvis": always-on, on-device wake word in a microphone foreground service (persistent notification). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Wake screen: pop up over other apps and the lock screen when you say "Hey Jarvis" (you grant it in Settings). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Pocket mode: route the conversation through a connected Bluetooth headset. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Keeps the listener from being stopped by battery savers (you approve it in Settings). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- After a reboot: post a "tap to resume listening" notification (the mic cannot start by itself). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Lets the app find a browser that supports Custom Tabs for OAuth sign-in (package visibility). -->
     <queries>
@@ -60,5 +72,59 @@
                 <data android:scheme="dev.jarvis" android:host="oauth" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".service.ListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- "Hey Jarvis" screen: shows over the lock screen and turns the screen on. Also the assist entry point. -->
+        <activity
+            android:name=".ui.wake.WakeActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="dev.jarvis.wake"
+            android:theme="@style/Theme.Jarvis.Wake">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Default digital assistant (you choose it in Android Settings): keeps "Hey Jarvis" running, even after reboot. -->
+        <service
+            android:name=".service.JarvisVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+        <service
+            android:name=".service.JarvisSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <service
+            android:name=".service.JarvisRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

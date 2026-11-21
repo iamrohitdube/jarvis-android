@@ -24,6 +24,7 @@ fun AgentError.toUi(): UiError = when (this) {
         DenyReason.CANCELLED -> UiError("Cancelled. Nothing was shown.", FixAction.RETRY, "Try again")
         DenyReason.TIMEOUT -> UiError("No confirmation, so nothing was shown.", FixAction.RETRY, "Try again")
         DenyReason.LOCKED_OUT -> UiError("PIN is locked and there's no fingerprint to unlock it. Set up a fingerprint or screen lock on the phone.", FixAction.OPEN_SETTINGS, "Security settings")
+        DenyReason.NEEDS_SCREEN -> UiError("That's private. Open JARVIS on your phone and ask again.", FixAction.NONE)
         DenyReason.NO_AUTH_AVAILABLE -> UiError("Sensitive data needs a PIN or fingerprint. Set one up first.", FixAction.OPEN_SETTINGS, "Set up")
     }
     is AgentError.BudgetReached -> UiError(

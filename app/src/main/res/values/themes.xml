@@ -10,6 +10,16 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 
+    <!-- "Hey Jarvis" wake screen: translucent so the animation draws over whatever was on screen. -->
+    <style name="Theme.Jarvis.Wake" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
     <!-- Launch screen (androidx core-splashscreen): navy background with the animated orb. -->
     <style name="Theme.Jarvis.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/jarvis_navy</item>

@@ -9,6 +9,7 @@ import dev.jarvis.connectors.ConnectorStatus
 import dev.jarvis.connectors.ConnectorTestResult
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
 import dev.jarvis.data.AppSettings
+import dev.jarvis.service.WakeBus
 import dev.jarvis.voice.Tts
 import dev.jarvis.data.AuditCategory
 import dev.jarvis.data.AuditEvent
@@ -25,6 +26,7 @@ import dev.jarvis.ui.SignInEvents
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -42,7 +44,184 @@ class SettingsViewModel @Inject constructor(
     private val current: CurrentConversation,
     private val audit: AuditLog,
     private val tts: Tts,
+    private val wakeBus: WakeBus,
+    private val wakeEngine: dev.jarvis.voice.WakeWordEngine,
+    private val recorder: dev.jarvis.voice.VoicePinEngine,
+    private val stt: dev.jarvis.voice.Stt,
+    private val cue: dev.jarvis.voice.WakeCue,
 ) : ViewModel() {
+
+    /** Training state: the current prompt (null = not training) and the result summary. */
+    val trainingPrompt = MutableStateFlow<String?>(null)
+    val trainingResult = MutableStateFlow<String?>(null)
+
+    /**
+     * "Teach JARVIS your voice": asks for "Hey Jarvis" x3 and "Jarvis" x2, records every guess the phone's
+     * recognizer makes, and saves the phrasings it uses for the user's voice as extra wake phrases.
+     */
+    fun trainWakeWord(context: android.content.Context) = viewModelScope.launch {
+        if (trainingPrompt.value != null) return@launch
+        val prompts = listOf("Hey Jarvis", "Hey Jarvis", "Hey Jarvis", "Jarvis", "Jarvis")
+        val attempts = mutableListOf<List<String>>()
+        trainingResult.value = null
+        wakeBus.micBusy.value = true
+        try {
+            kotlinx.coroutines.delay(500)
+            val onDevice = repo.current().preferOnDeviceStt
+            for ((i, p) in prompts.withIndex()) {
+                trainingPrompt.value = "${i + 1}/${prompts.size}: say \"$p\""
+                kotlinx.coroutines.delay(600)
+                val result = stt.listen(onDevice, 5)
+                    .firstOrNull { it is dev.jarvis.voice.SttEvent.Final || it is dev.jarvis.voice.SttEvent.Failed }
+                if (result is dev.jarvis.voice.SttEvent.Final) attempts += listOf(result.text) + result.alternatives
+                kotlinx.coroutines.delay(300)
+            }
+        } finally {
+            trainingPrompt.value = null
+            wakeBus.micBusy.value = false
+        }
+        if (attempts.isEmpty()) {
+            trainingResult.value = "Didn't hear anything. Try again somewhere quieter."
+            return@launch
+        }
+        val before = repo.current().learnedWakePhrases
+        val learned = dev.jarvis.voice.WakeTraining.learn(attempts, before)
+        repo.setLearnedWakePhrases(learned)
+        if (repo.current().wakeWordEnabled) runCatching { dev.jarvis.service.ListeningService.restart(context) }
+        val understood = dev.jarvis.voice.WakeTraining.understood(attempts)
+        val added = learned.size - before.size
+        trainingResult.value = "Your phone understood \"Jarvis\" $understood of ${attempts.size} times. " +
+            (if (added > 0) "Learned $added new way${if (added == 1) "" else "s"} you say it." else "Nothing new to learn.")
+    }
+
+    fun removeLearnedPhrase(phrase: String) = viewModelScope.launch {
+        repo.setLearnedWakePhrases(repo.current().learnedWakePhrases - phrase)
+    }
+
+    fun setWakeAck(v: dev.jarvis.voice.WakeAck) = viewModelScope.launch { repo.setWakeAck(v) }
+    fun setWakeAckPhrase(v: String) = viewModelScope.launch { repo.setWakeAckPhrase(v) }
+
+    /** Plays the chosen wake acknowledgement so the user can hear it. */
+    fun previewWakeAck() = viewModelScope.launch {
+        val s = repo.current()
+        runCatching { cue.play(dev.jarvis.voice.AckPlan.of(s.wakeAck, s.wakeAckPhrase, preheard = false, speakReplies = true), tts) }
+    }
+
+    fun clearLearnedPhrases() = viewModelScope.launch { repo.setLearnedWakePhrases(emptyList()) }
+
+    /** The last Test-now recording (raw), kept in memory only until the user saves it or leaves. */
+    private var lastTestClip: FloatArray? = null
+    val canSaveClip = MutableStateFlow(false)
+
+    /**
+     * Saves the last Test-now clip as a WAV in Downloads, only when the user taps "Save recording" (to share it
+     * for tuning). It's just the user saying "Hey Jarvis"; nothing is saved or sent otherwise.
+     */
+    fun saveTestClip(context: android.content.Context) = viewModelScope.launch {
+        val toSave: Map<String, FloatArray> =
+            if (compareClips.isNotEmpty()) compareClips.mapKeys { it.key.name.lowercase() }
+            else lastTestClip?.let { mapOf("test" to it) } ?: return@launch
+        val stamp = System.currentTimeMillis() / 1000
+        val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            toSave.all { (label, clip) ->
+                runCatching {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Downloads.DISPLAY_NAME, "jarvis-wake-$label-$stamp.wav")
+                        put(android.provider.MediaStore.Downloads.MIME_TYPE, "audio/wav")
+                    }
+                    val uri = context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)!!
+                    context.contentResolver.openOutputStream(uri)!!.use { it.write(dev.jarvis.voice.Wav.encode16k(clip)) }
+                }.isSuccess
+            }
+        }
+        wakeTest.value = if (ok) "Saved ${toSave.size} recording(s) to Downloads (jarvis-wake-…-$stamp.wav)" else "Couldn't save the recordings."
+    }
+
+    /** Clips from the last "Compare microphones" run, by source (memory only, saved only on request). */
+    private var compareClips: Map<dev.jarvis.voice.MicSource, FloatArray> = emptyMap()
+
+    /**
+     * Records "Hey Jarvis" once on each microphone path, checks which one the detector recognises (and how loud
+     * it is), then switches the wake word and spoken PIN to the best one and restarts the listener.
+     */
+    fun compareMicrophones(context: android.content.Context) = viewModelScope.launch {
+        if (wakeTesting.value) return@launch
+        wakeTesting.value = true
+        wakeBus.micBusy.value = true
+        val results = mutableListOf<Triple<dev.jarvis.voice.MicSource, Float, String?>>()
+        val clips = mutableMapOf<dev.jarvis.voice.MicSource, FloatArray>()
+        try {
+            val sources = dev.jarvis.voice.MicSource.candidates(context.getSystemService(android.media.AudioManager::class.java))
+            val sensitivity = repo.current().wakeSensitivity
+            sources.forEachIndexed { i, src ->
+                wakeTest.value = "${i + 1}/${sources.size} (${src.label}): say \"Hey Jarvis\" now…"
+                kotlinx.coroutines.delay(700)
+                val raw = runCatching { recorder.recordFor(3_000, src) }.getOrNull() ?: return@forEachIndexed
+                clips[src] = raw
+                var peak = 0f
+                var j = 0
+                while (j < raw.size) { val e = minOf(j + 1600, raw.size); peak = maxOf(peak, dev.jarvis.voice.EnergyGate.rms(raw.copyOfRange(j, e))); j = e }
+                val hit = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    runCatching { wakeEngine.spot(dev.jarvis.voice.AutoGain.normalize(raw).first, sensitivity) }.getOrNull()
+                }
+                results += Triple(src, peak, hit)
+            }
+        } finally {
+            wakeBus.micBusy.value = false
+            wakeTesting.value = false
+        }
+        compareClips = clips
+        lastTestClip = clips.values.firstOrNull()
+        canSaveClip.value = clips.isNotEmpty()
+        val best = results.filter { it.third != null }.maxByOrNull { it.second }?.first
+        val summary = results.joinToString("\n") { (s, peak, hit) ->
+            "• ${s.label}: " + (if (hit != null) "recognised" else "not recognised") + " (loudness %.4f)".format(peak)
+        }
+        if (best != null) {
+            repo.setWakeMicSource(best)
+            if (repo.current().wakeWordEnabled) runCatching { dev.jarvis.service.ListeningService.restart(context) }
+            wakeTest.value = "Using the ${best.label} from now on.\n$summary"
+        } else {
+            wakeTest.value = "None recognised you yet. Save the recordings and send them to me.\n$summary"
+        }
+    }
+
+    /** Result of the "Test now" check (null = not run). */
+    val wakeTest = MutableStateFlow<String?>(null)
+    val wakeTesting = MutableStateFlow(false)
+
+    /** Records one utterance and runs the detector on it, so we can tell voice vs. live-audio problems apart. */
+    fun testWakeWord() = viewModelScope.launch {
+        if (wakeTesting.value) return@launch
+        wakeTesting.value = true
+        wakeTest.value = "Say \"Hey Jarvis\" now (3 seconds)…"
+        wakeBus.micBusy.value = true
+        try {
+            kotlinx.coroutines.delay(400) // let the live listener release the mic
+            val raw = recorder.recordFor(3_000)
+            compareClips = emptyMap()
+            lastTestClip = raw
+            canSaveClip.value = true
+            var peak = 0f
+            var i = 0
+            while (i < raw.size) { val e = minOf(i + 1600, raw.size); peak = maxOf(peak, dev.jarvis.voice.EnergyGate.rms(raw.copyOfRange(i, e))); i = e }
+            val (boosted, gain) = dev.jarvis.voice.AutoGain.normalize(raw)
+            val sensitivity = repo.current().wakeSensitivity
+            val hit = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                runCatching { wakeEngine.spot(boosted, sensitivity) }.getOrElse { "error: ${it.javaClass.simpleName}" }
+            }
+            val loud = "mic loudness %.4f, boosted %.0fx".format(peak, gain)
+            wakeTest.value = when {
+                peak < 0.0003f -> "The mic gave almost silent audio ($loud). Another app may be using the mic."
+                hit == null -> "Not recognised ($loud). Try again, or switch to Sensitive."
+                hit.startsWith("error") -> "Detector failed: $hit"
+                else -> "Recognised \"${hit.replace('_', ' ').lowercase()}\" ($loud). The detector works with your voice."
+            }
+        } finally {
+            wakeBus.micBusy.value = false
+            wakeTesting.value = false
+        }
+    }
 
     /** Result line for the Data section. */
     val dataMessage = MutableStateFlow<String?>(null)
@@ -142,6 +321,16 @@ class SettingsViewModel @Inject constructor(
         audit.record(AuditEvent(AuditCategory.DATA, "delete_all_history", "ok"))
         dataMessage.value = "All chat history deleted."
     }
+
+    fun setWakeWordEnabled(v: Boolean) = viewModelScope.launch { repo.setWakeWordEnabled(v) }
+    fun setWakeEngine(v: dev.jarvis.voice.WakeEngineChoice, onSaved: () -> Unit) = viewModelScope.launch {
+        repo.setWakeEngine(v); onSaved()
+    }
+    fun setWakeSensitivity(v: dev.jarvis.voice.WakeSensitivity, onSaved: () -> Unit) = viewModelScope.launch {
+        repo.setWakeSensitivity(v); onSaved()
+    }
+    /** Live listener diagnostics (status, mic level, detections, last error). */
+    val wake: WakeBus get() = wakeBus
 
     fun setSpeakReplies(v: Boolean) = viewModelScope.launch { repo.setSpeakReplies(v) }
     fun setPreferOnDeviceStt(v: Boolean) = viewModelScope.launch { repo.setPreferOnDeviceStt(v) }

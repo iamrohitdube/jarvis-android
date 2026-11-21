@@ -76,6 +76,25 @@ Phase 3 status: access tiers, PIN, fingerprint, lockout, sessions and tool polic
   locked. Both are enforced in `VoiceSession`, not in prompts.
 - Spoken PINs aren't supported yet (they need voice match). The PIN is always typed in a masked field.
 
+## Wake word (Phase 5)
+- "Hey Jarvis" detection runs entirely on the phone (sherpa-onnx). Audio isn't stored or sent anywhere until the
+  wake word fires. After that, speech recognition follows the Voice rules above.
+- The listener is off by default, shows a persistent notification while on, and has a Stop button.
+- Hands-free with no screen (pocket, locked): personal and sensitive tools are refused out loud, because there's
+  no way to confirm PIN or fingerprint. Only general questions and public data are answered (`HeadlessAccess`).
+- The wake-word library and model are downloaded at build time from their official releases, with pinned SHA-256
+  hashes (supply-chain check).
+
+## Spoken PIN (Phase 5)
+- The PIN is recorded by JARVIS itself and processed only on the phone (voice match + digit recognition models).
+  It never goes to a cloud recognizer, to Claude, or to logs.
+- Voice match first: if the voice doesn't match, the PIN isn't transcribed or checked, and the attempt doesn't
+  count toward the lockout. That means no oracle for someone who overheard it.
+- The voiceprint is an embedding vector (not audio), stored Keystore-encrypted. Enrolling or deleting it needs a
+  fresh fingerprint or screen lock.
+- Voice match is a second factor, not proof: a good recording of the user could fool it. Fingerprint remains the
+  stronger choice when people are around (CLAUDE.md section 6).
+
 ## Prompt injection
 The system prompt marks tool, email, web and document content as untrusted data. In Phase 1 every tool is
 read-only, so nothing can act on injected instructions. Enforcement in code (confirmations for actions after

@@ -87,7 +87,8 @@ class AuthCoordinator(
 
     private sealed interface Action {
         data class Choose(val method: AuthMethod) : Action
-        data class Pin(val raw: String) : Action
+        /** [spoken] = said out loud (then [voiceMatched] must be true for the PIN to be checked at all). */
+        data class Pin(val raw: String, val spoken: Boolean = false, val voiceMatched: Boolean = false) : Action
         data class Bio(val outcome: BiometricOutcome) : Action
         data class Confirm(val allow: Boolean) : Action
         data object Cancel : Action
@@ -97,6 +98,11 @@ class AuthCoordinator(
     fun choose(method: AuthMethod) { actions.trySend(Action.Choose(method)) }
     /** The PIN goes straight to verification; it's never stored, logged or shown. */
     fun submitPin(raw: String) { actions.trySend(Action.Pin(raw)) }
+    /**
+     * A PIN said out loud (CLAUDE.md: spoken PIN + voice match). If the voice didn't match, the PIN is not
+     * checked at all (no oracle for a stranger) and the attempt doesn't count toward the lockout.
+     */
+    fun submitSpokenPin(spoken: SpokenPin) { actions.trySend(Action.Pin(spoken.digits.orEmpty(), spoken = true, voiceMatched = spoken.voiceMatched)) }
     fun onBiometricResult(outcome: BiometricOutcome) { actions.trySend(Action.Bio(outcome)) }
     fun confirm(allow: Boolean) { actions.trySend(Action.Confirm(allow)) }
     fun cancel() { actions.trySend(Action.Cancel) }
@@ -217,19 +223,23 @@ class AuthCoordinator(
                 AuthMethod.PIN -> {
                     show(AuthPrompt.Stage.PIN, tier, pinSet, pinLocked, bioOk, message)
                     when (val a = actions.receive()) {
-                        is Action.Pin -> when (val r = pin.verify(a.raw)) {
+                        is Action.Pin -> if (a.spoken && !a.voiceMatched) {
+                            audit(AuditCategory.AUTH, "voice_pin", "voice_mismatch", tier = tier, method = AuthMethod.PIN)
+                            message = VOICE_MISMATCH_MESSAGE
+                            if (bioOk) method = AuthMethod.BIOMETRIC
+                        } else when (val r = pin.verify(a.raw)) {
                             PinResult.Ok -> {
-                                audit(AuditCategory.AUTH, "pin", "ok", tier = tier, method = AuthMethod.PIN)
+                                audit(AuditCategory.AUTH, if (a.spoken) "voice_pin" else "pin", "ok", tier = tier, method = AuthMethod.PIN)
                                 sessions.grant(tier, AuthMethod.PIN)
                                 return AuthOutcome.Ok(AuthMethod.PIN, null)
                             }
                             is PinResult.Wrong -> {
-                                audit(AuditCategory.AUTH, "pin", "wrong", tier = tier, method = AuthMethod.PIN)
+                                audit(AuditCategory.AUTH, if (a.spoken) "voice_pin" else "pin", "wrong", tier = tier, method = AuthMethod.PIN)
                                 message = "Wrong PIN. ${r.attemptsLeft} ${if (r.attemptsLeft == 1) "try" else "tries"} left."
                             }
                             PinResult.Malformed -> {
-                                audit(AuditCategory.AUTH, "pin", "malformed", tier = tier, method = AuthMethod.PIN)
-                                message = "That isn't a PIN (4-8 digits). Try again."
+                                audit(AuditCategory.AUTH, if (a.spoken) "voice_pin" else "pin", "malformed", tier = tier, method = AuthMethod.PIN)
+                                message = if (a.spoken) "Didn't catch the PIN. Say it again, or type it." else "That isn't a PIN (4-8 digits). Try again."
                             }
                             PinResult.Locked -> {
                                 audit(AuditCategory.AUTH, "pin", "locked", tier = tier, method = AuthMethod.PIN)
@@ -350,5 +360,6 @@ class AuthCoordinator(
         const val PROMPT_TIMEOUT_MS = 120_000L
         const val PIN_LOCKED_MESSAGE = "PIN is locked, use fingerprint."
         const val SCREEN_OFF = "screen_off"
+        const val VOICE_MISMATCH_MESSAGE = "That didn't sound like you. Use fingerprint."
     }
 }

@@ -241,6 +241,40 @@ class AuthCoordinatorTest {
         assertTrue(sessions.revealed.value.isEmpty())
     }
 
+    @Test fun spokenPinWithTheOwnersVoiceUnlocks() = runTest {
+        setPin()
+        val r = authorizeAsync(netWorth, preferred = AuthMethod.PIN)
+        auth.submitSpokenPin(SpokenPin("2580", voiceMatched = true)); runCurrent()
+        val g = r.await() as AccessResult.Granted
+        assertEquals(AuthMethod.PIN, g.method)
+        assertFalse(g.screenOnly) // spoken PIN path: spoken and shown
+        assertTrue(audit.events.any { it.action == "voice_pin" && it.outcome == "ok" })
+    }
+
+    @Test fun spokenPinWithAStrangersVoiceIsNeverCheckedAndDoesNotCount() = runTest {
+        setPin()
+        val r = authorizeAsync(netWorth, preferred = AuthMethod.PIN)
+        auth.submitSpokenPin(SpokenPin("2580", voiceMatched = false)); runCurrent() // right digits, wrong voice
+        assertEquals(AuthPrompt.Stage.BIOMETRIC, stage)
+        assertEquals(AuthCoordinator.VOICE_MISMATCH_MESSAGE, auth.prompt.value!!.message)
+        assertEquals(0, pin.failedAttempts())
+        assertTrue(audit.events.any { it.outcome == "voice_mismatch" })
+        auth.cancel(); runCurrent()
+        assertTrue(r.await() is AccessResult.Denied)
+    }
+
+    @Test fun spokenWrongPinCountsAndUnclearAudioDoesNot() = runTest {
+        setPin()
+        val r = authorizeAsync(netWorth, preferred = AuthMethod.PIN)
+        auth.submitSpokenPin(SpokenPin(null, voiceMatched = true)); runCurrent()
+        assertEquals(0, pin.failedAttempts())
+        assertTrue(auth.prompt.value!!.message!!.contains("Didn't catch"))
+        auth.submitSpokenPin(SpokenPin("1357", voiceMatched = true)); runCurrent()
+        assertEquals(1, pin.failedAttempts())
+        auth.cancel(); runCurrent()
+        r.await()
+    }
+
     @Test fun unlockForReadingSavedMessages() = runTest {
         val r = async { auth.unlock() }.also { runCurrent() }
         auth.choose(AuthMethod.BIOMETRIC); runCurrent()

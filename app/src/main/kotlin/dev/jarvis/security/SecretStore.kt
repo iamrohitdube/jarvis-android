@@ -16,6 +16,8 @@ enum class SecretKey(val id: String) {
     PIN_HASH("pin_hash"),
     /** Consecutive well-formed wrong PINs; 3 = PIN path locked. Encrypted so it can't be edited to unlock. */
     PIN_FAILED_ATTEMPTS("pin_failed_attempts"),
+    /** Voice-match voiceprint: an embedding vector (not audio), for the spoken-PIN path. */
+    VOICE_PRINT("voice_print"),
 }
 
 /** Encrypted key/value storage for secrets (CLAUDE.md: Storage interface, swappable). */

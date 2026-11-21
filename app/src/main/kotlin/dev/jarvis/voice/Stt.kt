@@ -18,8 +18,9 @@ sealed interface SttEvent {
     data object Ready : SttEvent
     /** Rough input level, 0..1, for the listening animation. */
     data class Level(val value: Float) : SttEvent
-    data class Partial(val text: String) : SttEvent
-    data class Final(val text: String) : SttEvent
+    data class Partial(val text: String, val alternatives: List<String> = emptyList()) : SttEvent
+    /** [alternatives] = the recognizer's other guesses (n-best), when asked for with maxResults > 1. */
+    data class Final(val text: String, val alternatives: List<String> = emptyList()) : SttEvent
     data class Failed(val error: SttError) : SttEvent
 }
 
@@ -30,6 +31,8 @@ interface Stt {
     fun isAvailable(): Boolean
     /** Listens once; the flow completes after Final or Failed. Cancelling the collector cancels recognition. */
     fun listen(preferOnDevice: Boolean): Flow<SttEvent>
+    /** Like [listen] but asks for up to [maxResults] guesses per result (for the wake word and its training). */
+    fun listen(preferOnDevice: Boolean, maxResults: Int): Flow<SttEvent> = listen(preferOnDevice)
     /** Stop listening and recognise what was said so far (the user tapped "done"). */
     fun stopListening()
 }
@@ -46,7 +49,9 @@ class AndroidStt(private val context: Context) : Stt {
 
     override fun stopListening() { active?.stopListening() }
 
-    override fun listen(preferOnDevice: Boolean): Flow<SttEvent> = callbackFlow {
+    override fun listen(preferOnDevice: Boolean): Flow<SttEvent> = listen(preferOnDevice, 1)
+
+    override fun listen(preferOnDevice: Boolean, maxResults: Int): Flow<SttEvent> = callbackFlow {
         var onDevice = preferOnDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
         var recognizer: SpeechRecognizer? = null
@@ -64,11 +69,11 @@ class AndroidStt(private val context: Context) : Stt {
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
                 override fun onEndOfSpeech() = Unit
                 override fun onPartialResults(partialResults: Bundle?) {
-                    best(partialResults)?.let { trySend(SttEvent.Partial(it)) }
+                    best(partialResults)?.let { trySend(SttEvent.Partial(it, all(partialResults))) }
                 }
                 override fun onResults(results: Bundle?) {
                     val text = best(results)
-                    trySend(if (text.isNullOrBlank()) SttEvent.Failed(SttError.NO_MATCH) else SttEvent.Final(text))
+                    trySend(if (text.isNullOrBlank()) SttEvent.Failed(SttError.NO_MATCH) else SttEvent.Final(text, all(results)))
                     close()
                 }
                 override fun onError(error: Int) {
@@ -83,7 +88,7 @@ class AndroidStt(private val context: Context) : Stt {
                 }
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
             })
-            r.startListening(intent())
+            r.startListening(intent(maxResults))
         }
 
         start()
@@ -94,14 +99,17 @@ class AndroidStt(private val context: Context) : Stt {
         }
     }.flowOn(Dispatchers.Main)
 
-    private fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    private fun intent(maxResults: Int) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, maxResults.coerceIn(1, 10))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_LATENCY)
         }
     }
+
+    private fun all(b: Bundle?): List<String> =
+        b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.orEmpty()
 
     private fun best(b: Bundle?): String? =
         b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
