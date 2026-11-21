@@ -25,7 +25,16 @@ class WakeBus @Inject constructor() : dev.jarvis.voice.WakeDiagnostics, dev.jarv
     /** Last thing the phone-recognition listener heard (memory only, shown in Settings for troubleshooting). */
     val lastHeard = MutableStateFlow<String?>(null)
     override fun onHeard(text: String) { lastHeard.value = text.take(80) }
+    val lastWake = MutableStateFlow<String?>(null)
+    val lastWakeAt = MutableStateFlow<Long?>(null)
+    override fun onWake(text: String) { lastWake.value = text.take(80); lastWakeAt.value = System.currentTimeMillis() }
 
+    /** The question said with the wake phrase, while it's still being recorded/transcribed (for the wake screen). */
+    val pendingQuestion = MutableStateFlow<kotlinx.coroutines.Deferred<String?>?>(null)
+    /** True when the wake sound already played at the moment of the wake (pocket mode). */
+    val wakeSoundPlayed = MutableStateFlow(false)
+    /** Feature windows of the last wake (numbers only), for "Not for me". */
+    val lastWakeFeatures = MutableStateFlow<List<FloatArray>?>(null)
     val conversationActive = MutableStateFlow(false)
     val wakeScreenShown = MutableStateFlow(false)
     val micBusy = MutableStateFlow(false)
@@ -42,6 +51,8 @@ class WakeBus @Inject constructor() : dev.jarvis.voice.WakeDiagnostics, dev.jarv
 
     val gain = MutableStateFlow(1f)
 
+    val score = MutableStateFlow(0f)
+    override fun onScore(score: Float) { this.score.value = score }
     override fun onAudio(level: Float, modelActive: Boolean, gain: Float) {
         this.level.value = level
         this.modelActive.value = modelActive

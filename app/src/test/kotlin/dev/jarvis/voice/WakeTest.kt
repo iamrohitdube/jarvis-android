@@ -62,8 +62,29 @@ class WakePhraseTest {
 
     @Test fun strictNeedsAGreeting() {
         assertEquals("", WakePhrase.match("ok Jarvis", WakeSensitivity.STRICT))
+        assertNull(WakePhrase.match("Jarvis what time", WakeSensitivity.STRICT))
         assertNull(WakePhrase.match("I told Jarvis about it", WakeSensitivity.STRICT))
-        assertEquals("about it", WakePhrase.match("I told Jarvis about it", WakeSensitivity.NORMAL))
+    }
+
+    @Test fun nameMidConversationNeverWakes() {
+        for (s in listOf(WakeSensitivity.STRICT, WakeSensitivity.NORMAL)) {
+            assertNull(WakePhrase.match("I told Jarvis about it", s))
+            assertNull(WakePhrase.match("yeah hey jarvis is a cool name", s))
+        }
+        for (s in WakeSensitivity.entries) assertNull(WakePhrase.match("we watched iron man and jarvis was so cool", s))
+    }
+
+    @Test fun startOfUtteranceWakes() {
+        assertEquals("what's the time", WakePhrase.match("Jarvis what's the time", WakeSensitivity.NORMAL))
+        assertEquals("lights", WakePhrase.match("um hey Jarvis lights", WakeSensitivity.NORMAL))
+        assertEquals("about it", WakePhrase.match("I told Jarvis about it", WakeSensitivity.SENSITIVE))
+    }
+
+    @Test fun alternativesOnlyCountForTheExactName() {
+        // A lower guess with a near spelling or mid-sentence name doesn't wake.
+        assertNull(WakePhrase.matchAny(listOf("hey service", "hey jarviz", "hey travis"), WakeSensitivity.NORMAL))
+        assertNull(WakePhrase.matchAny(listOf("hey service", "a b c", "d e f", "hey jarvis"), WakeSensitivity.NORMAL)) // only next 2
+        assertEquals("go", WakePhrase.matchAny(listOf("hey service go", "hey jarvis go"), WakeSensitivity.NORMAL)?.question)
     }
 }
 
@@ -145,6 +166,24 @@ class HeadlessAccessTest {
         assertEquals(0, delegateCalls) // never reaches the prompt-showing gate
     }
 
+    @Test fun handsFreeSpokenPinUnlocksPrivateQuestionsWhenSetUp() = runBlocking {
+        locked = true
+        var asked: AuthMethod? = null
+        val withPin = HeadlessAccess(
+            AccessController { t, m -> asked = m; AccessResult.Granted(t, m, false, true) },
+            sessions, { SessionPolicy() }, { locked }, spokenPinReady = { true },
+        )
+        val r = withPin.authorize(listOf(netWorth), null)
+        assertTrue(r is AccessResult.Granted)
+        assertEquals(AuthMethod.PIN, asked) // straight to the PIN: no screen for a fingerprint
+    }
+
+    @Test fun withoutSpokenPinPrivateQuestionsStillNeedTheScreen() = runBlocking {
+        locked = true
+        val noPin = HeadlessAccess(delegate, sessions, { SessionPolicy() }, { locked }, spokenPinReady = { false })
+        assertEquals(DenyReason.NEEDS_SCREEN, (noPin.authorize(listOf(netWorth), null) as AccessResult.Denied).reason)
+    }
+
     @Test fun aValidSessionOnAnUnlockedPhoneIsHonoured() = runBlocking {
         sessions.grant(AuthTier.SENSITIVE, AuthMethod.PIN)
         assertTrue(access.authorize(listOf(netWorth), null) is AccessResult.Granted)
@@ -152,9 +191,16 @@ class HeadlessAccessTest {
     }
 }
 
-private class ScriptedStt(private vararg val events: SttEvent) : Stt {
+/** Each listen plays the next scripted session; after the script, the user says nothing. */
+private class ScriptedStt(vararg sessions: List<SttEvent>) : Stt {
+    constructor(vararg events: SttEvent) : this(events.toList())
+    private val queue = ArrayDeque(sessions.toList())
+    var listens = 0
     override fun isAvailable() = true
-    override fun listen(preferOnDevice: Boolean): Flow<SttEvent> = flowOf(*events)
+    override fun listen(preferOnDevice: Boolean): Flow<SttEvent> {
+        listens++
+        return flowOf(*(queue.removeFirstOrNull() ?: listOf(SttEvent.Failed(SttError.NO_SPEECH))).toTypedArray())
+    }
     override fun stopListening() = Unit
 }
 
@@ -211,6 +257,52 @@ class VoiceConversationTest {
         assertEquals(WakePhase.DONE, conversation.phase.value)
         val saved = history.conversations().first().single()
         assertEquals(2, saved.messageCount)
+    }
+
+    @Test fun conversationContinuesWithContextUntilTheUserSaysStop() = runBlocking {
+        val tts = RecordingTts()
+        val llm = OneReplyLlm("Did you mean your net worth? ")
+        val agent = AgentLoop(llm, emptyMap(), tempUsageMeter(db), AccessController { t, _ -> AccessResult.Granted(t, null, false, false) })
+        val stt = ScriptedStt(
+            listOf(SttEvent.Final("what's my worth")),
+            listOf(SttEvent.Final("yes that one")),
+            listOf(SttEvent.Final("thanks Jarvis")),
+        )
+        val conversation = VoiceConversation(stt, tts, agent, history, settings) { false }
+
+        conversation.runOnce(this)
+
+        assertEquals(2, llm.requests.size) // "thanks" ends it without another request
+        // The follow-up carries the first exchange as context.
+        val second = llm.requests[1].toString()
+        assertTrue(second.contains("what's my worth") && second.contains("yes that one"))
+        assertEquals(1, history.conversations().first().size) // one conversation, not two
+        assertEquals(4, history.conversations().first().single().messageCount)
+        assertEquals(WakePhase.DONE, conversation.phase.value)
+    }
+
+    @Test fun conversationSleepsAfter15SecondsOfSilence() = runBlocking {
+        val tts = RecordingTts()
+        val llm = OneReplyLlm("It's sunny. ")
+        val agent = AgentLoop(llm, emptyMap(), tempUsageMeter(db), AccessController { t, _ -> AccessResult.Granted(t, null, false, false) })
+        val stt = ScriptedStt(listOf(SttEvent.Final("how's the weather")))
+        val conversation = VoiceConversation(stt, tts, agent, history, settings) { false }
+
+        conversation.runOnce(this)
+
+        assertEquals(1, llm.requests.size)
+        // 1 question + 3 silent attempts of ~5 s = 15 s, then sleep.
+        assertEquals(4, stt.listens)
+        assertEquals(WakePhase.DONE, conversation.phase.value)
+    }
+
+    @Test fun goodbyePhrases() {
+        listOf("stop", "That's all.", "thanks Jarvis", "okay bye", "go to sleep", "never mind", "Thank you so much").forEach {
+            assertTrue(it, Conversation.isGoodbye(it))
+        }
+        listOf("stop the music", "thanks, what's the time", "what's my net worth", "nothing much happened today").forEach {
+            assertFalse(it, Conversation.isGoodbye(it))
+        }
     }
 
     @Test fun privateQuestionInAPocketIsRefusedWithoutCallingClaude() = runBlocking {
@@ -270,7 +362,7 @@ class WakeAckTest {
 class WakeTrainingTest {
     @org.junit.Test fun nBestAlternativeWakes() {
         org.junit.Assert.assertEquals("what time is it",
-            WakePhrase.matchAny(listOf("hey service what time is it", "hey jarvis what time is it"), WakeSensitivity.NORMAL))
+            WakePhrase.matchAny(listOf("hey service what time is it", "hey jarvis what time is it"), WakeSensitivity.NORMAL)?.question)
     }
     @org.junit.Test fun nearSpellingsWake() {
         org.junit.Assert.assertEquals("", WakePhrase.match("hey jarviz", WakeSensitivity.STRICT))
@@ -290,9 +382,10 @@ class WakeTrainingTest {
         val learned = listOf("hey service", "travis")
         org.junit.Assert.assertEquals("lights on", WakePhrase.match("Hey service, lights on", WakeSensitivity.STRICT, learned))
         org.junit.Assert.assertNull(WakePhrase.match("customer service", WakeSensitivity.STRICT, learned))
-        // Single-word learned phrases are ignored on Strict, used on Normal.
-        org.junit.Assert.assertNull(WakePhrase.match("travis", WakeSensitivity.STRICT, learned))
-        org.junit.Assert.assertEquals("", WakePhrase.match("travis", WakeSensitivity.NORMAL, learned))
+        org.junit.Assert.assertNull(WakePhrase.match("call hey service now", WakeSensitivity.NORMAL, learned)) // not at the start
+        // Single-word learned phrases only on Sensitive.
+        org.junit.Assert.assertNull(WakePhrase.match("travis", WakeSensitivity.NORMAL, learned))
+        org.junit.Assert.assertEquals("", WakePhrase.match("travis", WakeSensitivity.SENSITIVE, learned))
     }
     @org.junit.Test fun understoodCountsTopGuessOnly() {
         org.junit.Assert.assertEquals(1, WakeTraining.understood(listOf(listOf("hey jarvis"), listOf("hey service", "hey jarvis"))))

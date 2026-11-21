@@ -164,8 +164,23 @@ object AppModule {
     fun modelDownloader(@ApplicationContext c: Context, http: OkHttpClient) = ModelDownloader(c, http)
 
     @Provides @Singleton
-    fun voicePinEngine(models: ModelDownloader, secrets: SecretStore, settings: SettingsRepository) =
-        VoicePinEngine(models, secrets) { settings.current().wakeMicSource }
+    fun transcriber(stt: Stt, voicePin: VoicePinEngine): dev.jarvis.voice.Transcriber = dev.jarvis.voice.FallbackTranscriber(stt, voicePin)
+
+    @Provides @Singleton
+    fun voiceCapture(settings: SettingsRepository): dev.jarvis.voice.VoiceCapture =
+        dev.jarvis.voice.MicVoiceCapture { settings.current().wakeMicSource }
+
+    @Provides @Singleton
+    fun heyJarvisEngine(models: ModelDownloader) = dev.jarvis.voice.OpenWakeWordEngine({ models.dir })
+
+    @Provides @Singleton
+    fun voicePinEngine(models: ModelDownloader, secrets: SecretStore, settings: SettingsRepository, stt: Stt) =
+        VoicePinEngine(
+            models, secrets,
+            micSource = { settings.current().wakeMicSource },
+            requireVoiceMatch = { settings.current().voiceMatchForPin },
+            onDeviceRecognizer = { pcm -> stt.transcribeOnDeviceOnly(pcm) },
+        )
 
     @Provides @Singleton
     fun headsetRouter(@ApplicationContext c: Context) = HeadsetAudioRouter(c)
@@ -181,10 +196,15 @@ object AppModule {
         device: AndroidBiometricAvailability,
         snapshots: SnapshotStore,
         audit: AuditLog,
+        voicePin: VoicePinEngine,
+        pin: dev.jarvis.security.PinAuthenticator,
         @ApplicationContext c: Context,
     ) = AgentLoop(
         llm, connectors, usage,
-        access = HeadlessAccess(auth, sessions, { settings.current().security.sessions }, { device.deviceLocked() }),
+        access = HeadlessAccess(
+            auth, sessions, { settings.current().security.sessions }, { device.deviceLocked() },
+            spokenPinReady = { settings.current().speakReplies && voicePin.ready() && !pin.isLocked() },
+        ),
         snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
     )
 

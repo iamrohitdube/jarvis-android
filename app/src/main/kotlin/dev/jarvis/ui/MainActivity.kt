@@ -90,7 +90,10 @@ class MainActivity : ComponentActivity() {
             provider.iconView.animate().scaleX(1.6f).scaleY(1.6f).alpha(0f).setDuration(320).start()
             provider.view.animate().alpha(0f).setDuration(380).withEndAction { provider.remove() }.start()
         }
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         // Launch the system fingerprint prompt whenever the coordinator reaches that stage.
         lifecycleScope.launch {

@@ -40,11 +40,12 @@ class SystemSpeechWakeEngine(
                 }
             }
             val text = heard
-            // Check every guess the recognizer made, not just the top one.
+            // The top guess, then (exact name only) the recognizer's next few guesses.
             val match = text?.let { WakePhrase.matchAny(listOf(it) + guesses, sensitivity, phrases) }
             if (match != null) {
                 (diagnostics as? WakeTranscriptSink)?.onHeard(text)
-                emit(WakeDetection("JARVIS", System.currentTimeMillis(), followUp = match))
+                (diagnostics as? WakeTranscriptSink)?.onWake(match.heard)
+                emit(WakeDetection("JARVIS", System.currentTimeMillis(), followUp = match.question))
                 backoff = 0
             } else {
                 if (text != null) (diagnostics as? WakeTranscriptSink)?.onHeard(text)
@@ -64,7 +65,12 @@ private const val NBEST = 5
 /** Optional: lets Settings show the last thing the wake listener heard (memory only, for troubleshooting). */
 interface WakeTranscriptSink {
     fun onHeard(text: String)
+    /** The transcript that woke JARVIS (so a false wake can be traced in Settings). */
+    fun onWake(text: String) {}
 }
+
+/** A wake: what was heard and the question said after the name ("" if none). */
+data class WakeMatch(val heard: String, val question: String)
 
 /** Finds the wake word in a transcript and returns what was said after it ("" if nothing). Null = no wake word. */
 object WakePhrase {
@@ -77,30 +83,55 @@ object WakePhrase {
     /** "jarvis" or a near spelling (edit distance 1 for 5-7 letter words, e.g. "jarvi", "jarviz"). */
     fun isName(w: String): Boolean = w in names || (w.length in 5..7 && w.startsWith("ja") && editDistance(w, "jarvis") <= 1)
 
-    fun match(transcript: String, sensitivity: WakeSensitivity, learned: List<String> = emptyList()): String? {
-        val ws = words(transcript)
-        // Phrases learned from the user's voice, matched as whole word sequences.
+    private val fillers = setOf("um", "uh", "erm", "hmm", "oh", "ah", "so", "and")
+
+    /**
+     * The wake word must START what was said: "Jarvis …" or "Hey Jarvis …" (after at most two fillers like "um").
+     * A name in the middle of a conversation ("I told Jarvis about it") never wakes JARVIS.
+     * - Strict: a greeting is required ("hey/ok jarvis").
+     * - Normal: "jarvis …" or "<greeting> jarvis …".
+     * - Sensitive: the name within the first three words.
+     * [fuzzy] allows near spellings ("jarviz"); used only on the recognizer's top guess.
+     */
+    fun match(
+        transcript: String,
+        sensitivity: WakeSensitivity,
+        learned: List<String> = emptyList(),
+        fuzzy: Boolean = true,
+    ): String? {
+        val all = words(transcript)
+        val skip = all.take(2).takeWhile { it in fillers }.size
+        val ws = all.drop(skip)
+        if (ws.isEmpty()) return null
+        // Phrases learned from the user's voice: whole phrase, at the start; one-word phrases only on Sensitive.
         for (phrase in learned) {
             val p = words(phrase)
-            if (p.isEmpty()) continue
-            if (p.size == 1 && sensitivity == WakeSensitivity.STRICT) continue // single words only off Strict
-            val at = indexOfSequence(ws, p)
-            if (at >= 0) return ws.drop(at + p.size).joinToString(" ")
+            if (p.isEmpty() || p.size > ws.size) continue
+            if (p.size == 1 && sensitivity != WakeSensitivity.SENSITIVE) continue
+            if (ws.subList(0, p.size) == p) return ws.drop(p.size).joinToString(" ")
         }
-        val i = ws.indexOfFirst { isName(it) }
+        val isWake: (String) -> Boolean = if (fuzzy) ::isName else { w -> w in names }
+        val i = when (sensitivity) {
+            WakeSensitivity.STRICT -> if (ws.size >= 2 && ws[0] in greetings && isWake(ws[1])) 1 else -1
+            WakeSensitivity.NORMAL -> when {
+                isWake(ws[0]) -> 0
+                ws.size >= 2 && ws[0] in greetings && isWake(ws[1]) -> 1
+                else -> -1
+            }
+            WakeSensitivity.SENSITIVE -> ws.take(3).indexOfFirst(isWake)
+        }
         if (i < 0) return null
-        // Strict: "Jarvis" must follow a greeting ("hey jarvis"), to avoid waking when someone just mentions the name.
-        if (sensitivity == WakeSensitivity.STRICT && (i == 0 || ws[i - 1] !in greetings)) return null
         return ws.drop(i + 1).joinToString(" ")
     }
 
-    /** First match across the recognizer's guesses (the top guess first). */
-    fun matchAny(transcripts: List<String>, sensitivity: WakeSensitivity, learned: List<String> = emptyList()): String? =
-        transcripts.asSequence().mapNotNull { match(it, sensitivity, learned) }.firstOrNull()
-
-    private fun indexOfSequence(ws: List<String>, p: List<String>): Int {
-        for (i in 0..ws.size - p.size) if (ws.subList(i, i + p.size) == p) return i
-        return -1
+    /** The top guess with full rules; the next 2 guesses only for the exact name (no learned phrases, no fuzzing). */
+    fun matchAny(transcripts: List<String>, sensitivity: WakeSensitivity, learned: List<String> = emptyList()): WakeMatch? {
+        val top = transcripts.firstOrNull() ?: return null
+        match(top, sensitivity, learned, fuzzy = true)?.let { return WakeMatch(top, it) }
+        for (alt in transcripts.drop(1).take(2)) {
+            match(alt, sensitivity, emptyList(), fuzzy = false)?.let { return WakeMatch(alt, it) }
+        }
+        return null
     }
 
     fun editDistance(a: String, b: String): Int {
@@ -134,6 +165,7 @@ object WakeTraining {
                 if (ws.isEmpty() || ws.size > 3) continue
                 if (ws.any { WakePhrase.isName(it) }) continue // already understood
                 if (ws.size == 1 && ws[0] in WakePhrase.greetings) continue // just "hey"
+                if (ws.size == 1 && ws[0].length < 4) continue // too short to be safe
                 out += ws.joinToString(" ")
             }
         }

@@ -14,9 +14,9 @@
                 android:startY="0"
                 android:endX="108"
                 android:endY="108"
-                android:startColor="#FF1C2A6E"
-                android:centerColor="#FF0F1633"
-                android:endColor="#FF070A12" />
+                android:startColor="#FF0A2A55"
+                android:centerColor="#FF06142A"
+                android:endColor="#FF020509" />
         </aapt:attr>
     </path>
     <path android:pathData="M54,54m-46,0a46,46 0,1 1,92 0a46,46 0,1 1,-92 0">
@@ -26,8 +26,8 @@
                 android:centerX="54"
                 android:centerY="54"
                 android:gradientRadius="46"
-                android:startColor="#334F6BFF"
-                android:endColor="#004F6BFF" />
+                android:startColor="#331E8BFF"
+                android:endColor="#001E8BFF" />
         </aapt:attr>
     </path>
 </vector>

@@ -1,6 +1,5 @@
 package dev.jarvis.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -15,55 +14,58 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Brand palette: electric blue → cyan → violet, on deep navy. */
+/** Brand palette: arc-reactor blue on near-black (the JARVIS HUD look). */
 object Brand {
-    val Blue = Color(0xFF4F6BFF)
-    val Cyan = Color(0xFF22D3EE)
-    val Violet = Color(0xFFA78BFA)
-    val Navy = Color(0xFF0A0E17)
+    val Cyan = Color(0xFF5CE1FF)      // arc-reactor glow
+    val Blue = Color(0xFF1E8BFF)      // electric blue
+    val Violet = Color(0xFF3D6BFF)    // kept for older call sites: a deeper blue accent
+    val Deep = Color(0xFF0A3A8C)      // plasma shadow
+    val Ice = Color(0xFFDDF7FF)       // hot core / highlights
+    val Navy = Color(0xFF03060C)      // background
     val Success = Color(0xFF34D399)
     val Warning = Color(0xFFFBBF24)
 
-    val gradient = listOf(Blue, Cyan, Violet)
+    val gradient = listOf(Ice, Cyan, Blue)
     fun horizontal() = Brush.horizontalGradient(gradient)
     fun linear() = Brush.linearGradient(gradient)
 }
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF8EA6FF),
-    onPrimary = Color(0xFF0B1A4D),
-    primaryContainer = Color(0xFF26387E),
-    onPrimaryContainer = Color(0xFFDDE3FF),
-    secondary = Color(0xFF67E8F9),
-    onSecondary = Color(0xFF00363C),
-    secondaryContainer = Color(0xFF0E4A53),
-    onSecondaryContainer = Color(0xFFC4F7FF),
-    tertiary = Color(0xFFC4B1FF),
-    onTertiary = Color(0xFF2E1A66),
-    tertiaryContainer = Color(0xFF45307C),
-    onTertiaryContainer = Color(0xFFEADDFF),
+    primary = Color(0xFF5CE1FF),
+    onPrimary = Color(0xFF00273A),
+    primaryContainer = Color(0xFF0C3B5C),
+    onPrimaryContainer = Color(0xFFCDF3FF),
+    secondary = Color(0xFF7FB8FF),
+    onSecondary = Color(0xFF002E5F),
+    secondaryContainer = Color(0xFF0E2E57),
+    onSecondaryContainer = Color(0xFFD5E6FF),
+    tertiary = Color(0xFF9FD8FF),
+    onTertiary = Color(0xFF003352),
+    tertiaryContainer = Color(0xFF123B5A),
+    onTertiaryContainer = Color(0xFFD6EEFF),
     background = Brand.Navy,
-    onBackground = Color(0xFFE6EAF3),
+    onBackground = Color(0xFFE4F2FA),
     surface = Brand.Navy,
-    onSurface = Color(0xFFE6EAF3),
-    surfaceVariant = Color(0xFF1C2333),
-    onSurfaceVariant = Color(0xFF9CA5B8),
-    surfaceContainerLowest = Color(0xFF06090F),
-    surfaceContainerLow = Color(0xFF0F141F),
-    surfaceContainer = Color(0xFF131926),
-    surfaceContainerHigh = Color(0xFF19202F),
-    surfaceContainerHighest = Color(0xFF202838),
-    outline = Color(0xFF3B4458),
-    outlineVariant = Color(0xFF262E3F),
+    onSurface = Color(0xFFE4F2FA),
+    surfaceVariant = Color(0xFF13202E),
+    onSurfaceVariant = Color(0xFF8FA6B8),
+    surfaceContainerLowest = Color(0xFF010205),
+    surfaceContainerLow = Color(0xFF08111C),
+    surfaceContainer = Color(0xFF0C1724),
+    surfaceContainerHigh = Color(0xFF111E2D),
+    surfaceContainerHighest = Color(0xFF172636),
+    outline = Color(0xFF2E4559),
+    outlineVariant = Color(0xFF1A2A3A),
     error = Color(0xFFFF8E86),
     onError = Color(0xFF5C0D08),
     errorContainer = Color(0xFF4E1916),
     onErrorContainer = Color(0xFFFFDAD6),
-    inverseSurface = Color(0xFFE6EAF3),
-    inverseOnSurface = Color(0xFF151A24),
+    inverseSurface = Color(0xFFE4F2FA),
+    inverseOnSurface = Color(0xFF0C1724),
     scrim = Color(0xFF000000),
 )
 
+@Suppress("unused")
 private val LightColors = lightColorScheme(
     primary = Color(0xFF3D5AFE),
     onPrimary = Color.White,
@@ -119,11 +121,14 @@ val JarvisTypography = Typography(
     labelMedium = base.labelMedium.copy(fontWeight = FontWeight.Medium),
 )
 
-/** Brand colours in both modes (no wallpaper-based dynamic colour, so JARVIS always looks like JARVIS). */
+/**
+ * JARVIS is always dark (the HUD look), whatever the system setting; no wallpaper-based dynamic colour.
+ * The light scheme is kept unused for a possible future option.
+ */
 @Composable
-fun JarvisTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+fun JarvisTheme(@Suppress("UNUSED_PARAMETER") dark: Boolean = true, content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (dark) DarkColors else LightColors,
+        colorScheme = DarkColors,
         shapes = JarvisShapes,
         typography = JarvisTypography,
         content = content,

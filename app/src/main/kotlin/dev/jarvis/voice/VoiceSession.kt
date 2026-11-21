@@ -16,7 +16,7 @@ enum class VoiceState { IDLE, LISTENING, THINKING, SPEAKING }
  * - Only voice-initiated turns are spoken; typed questions get on-screen answers.
  * - Quiet mode (speakReplies = false): nothing is spoken.
  * - Fingerprint-authorised (screen-only) replies are never read out: "Done, it's on your screen."
- * - Sensitive replies are never spoken while the phone is locked.
+ * - Sensitive replies are never spoken while the phone is locked, unless this request was unlocked with the PIN.
  * - Barge-in: starting to listen, or [bargeIn], stops speech immediately.
  */
 class VoiceSession(
@@ -102,14 +102,17 @@ class VoiceSession(
         voiceTurn = voice
         screenOnly = false
         sensitive = false
+        byPin = false
         chunker.reset()
         if (voice) _state.value = VoiceState.THINKING
     }
 
-    fun onAuthorized(screenOnly: Boolean, sensitive: Boolean) {
+    fun onAuthorized(screenOnly: Boolean, sensitive: Boolean, byPin: Boolean = false) {
         this.screenOnly = screenOnly
         this.sensitive = sensitive
+        this.byPin = byPin
     }
+    private var byPin = false
 
     fun onTextDelta(delta: String) {
         if (canSpeakContent()) chunker.feed(delta).forEach(tts::speak)
@@ -120,7 +123,7 @@ class VoiceSession(
         when {
             !speakReplies -> Unit
             screenOnly -> tts.speak(SCREEN_ONLY_LINE)
-            sensitive && deviceLocked() -> tts.speak(LOCKED_LINE)
+            sensitive && deviceLocked() && !byPin -> tts.speak(LOCKED_LINE)
             else -> chunker.flush().forEach(tts::speak)
         }
         endTurn()
@@ -159,7 +162,7 @@ class VoiceSession(
         if (_state.value == VoiceState.THINKING) _state.value = if (tts.speaking.value) VoiceState.SPEAKING else VoiceState.IDLE
     }
 
-    private fun canSpeakContent() = voiceTurn && speakReplies && !screenOnly && !(sensitive && deviceLocked())
+    private fun canSpeakContent() = voiceTurn && speakReplies && !screenOnly && !(sensitive && deviceLocked() && !byPin)
 
     companion object {
         const val SCREEN_ONLY_LINE = "Done, it's on your screen."

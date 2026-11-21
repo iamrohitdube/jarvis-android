@@ -112,6 +112,15 @@ class SecurityViewModel @Inject constructor(
     /** 0..1 while downloading, null otherwise. */
     val downloadProgress = MutableStateFlow<Float?>(null)
     val voiceEnrolled = MutableStateFlow(false)
+    val voiceMatchOn = MutableStateFlow(false)
+    /** Turning the voice check off weakens the spoken PIN, so it needs a fingerprint or screen lock (like deleting the voiceprint). */
+    fun setVoiceMatch(on: Boolean) = viewModelScope.launch {
+        if (!on && auth.strongAuth() == null) { voiceMessage.value = "Your fingerprint or screen lock is needed to turn this off."; return@launch }
+        repo.setVoiceMatchForPin(on)
+        voiceMatchOn.value = on
+        audit.record(AuditEvent(AuditCategory.AUTH, "voice_match_setting", if (on) "on" else "off"))
+        if (on && !voicePin.isEnrolled()) voiceMessage.value = "Now tap \"Set up voice match\" to record your voice."
+    }
     val voiceMessage = MutableStateFlow<String?>(null)
     /** Enrolment dialog: the digit phrases to read and how many are recorded. */
     val enrollPhrases = MutableStateFlow<List<String>?>(null)
@@ -182,6 +191,25 @@ class SecurityViewModel @Inject constructor(
         enrollPhrases.value = null
     }
 
+    /** "Test voice match": records any phrase (not the PIN) and shows its score against the cut-off. */
+    val voiceTesting = MutableStateFlow(false)
+    fun testVoiceMatch() = viewModelScope.launch {
+        if (voiceTesting.value) return@launch
+        voiceTesting.value = true
+        voiceMessage.value = "Say \"Hey Jarvis, this is my voice\" now…"
+        try {
+            val audio = voicePin.record()
+            val score = audio?.let { voicePin.similarity(it) }
+            voiceMessage.value = when {
+                score == null -> "Didn't hear enough. Try again, a little longer."
+                score >= dev.jarvis.voice.VoicePinEngine.THRESHOLD -> "Match: score %.2f (needs %.2f). Spoken PIN will work.".format(score, dev.jarvis.voice.VoicePinEngine.THRESHOLD)
+                else -> "No match: score %.2f (needs %.2f). Tap Re-record to enrol again in the way you talk to JARVIS.".format(score, dev.jarvis.voice.VoicePinEngine.THRESHOLD)
+            }
+        } finally {
+            voiceTesting.value = false
+        }
+    }
+
     fun removeVoice() = viewModelScope.launch {
         val proof = auth.strongAuth() ?: run { voiceMessage.value = "Your fingerprint or screen lock is needed."; return@launch }
         voicePin.remove(proof)
@@ -210,6 +238,7 @@ class SecurityViewModel @Inject constructor(
 
     fun refresh() = viewModelScope.launch {
         voiceEnrolled.value = voicePin.isEnrolled()
+        voiceMatchOn.value = repo.current().voiceMatchForPin
         modelsInstalled.value = models.installed()
         pinLocked.value = pin.isLocked()
         bioStatus.value = bio.status()
@@ -399,12 +428,25 @@ fun VoicePinSection(vm: SecurityViewModel) {
             Hint("Downloading… " + (p * 100).toInt() + "%")
         }
         if (!pinSet) Hint("Set a JARVIS PIN first.")
+        val matchOn by vm.voiceMatchOn.collectAsStateWithLifecycle()
+        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Check it's my voice", style = MaterialTheme.typography.bodyLarge)
+                Hint(
+                    if (matchOn) "Only your voice can unlock with a spoken PIN."
+                    else "Anyone who knows your PIN can say it. Say it only when you're alone; use fingerprint when others are near."
+                )
+            }
+            androidx.compose.material3.Switch(checked = matchOn, onCheckedChange = vm::setVoiceMatch)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!installed) {
                 Button(onClick = vm::downloadVoiceModels, enabled = progress == null) { Text("Download") }
             } else if (!enrolled) {
                 Button(onClick = vm::beginVoiceEnroll, enabled = pinSet) { Text("Set up voice match") }
             } else {
+                val testing by vm.voiceTesting.collectAsStateWithLifecycle()
+                Button(onClick = vm::testVoiceMatch, enabled = !testing) { Text(if (testing) "Listening…" else "Test") }
                 OutlinedButton(onClick = vm::beginVoiceEnroll) { Text("Re-record") }
                 TextButton(onClick = vm::removeVoice) { Text("Delete voiceprint") }
             }
@@ -430,7 +472,10 @@ private fun EnrollDialog(vm: SecurityViewModel, phrases: List<String>) {
                 Text("Phrase ${minOf(done + 1, phrases.size)} of ${phrases.size}. Tap Record and read these digits:", textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(current, style = MaterialTheme.typography.headlineMedium)
-                Hint("Not your PIN. Speak normally, in a quiet place.")
+                Hint(
+                    if (done % 2 == 0) "Not your PIN. Speak normally, the way you talk to JARVIS."
+                    else "Not your PIN. This time a bit louder, as if the phone is on the table."
+                )
                 if (recording) dev.jarvis.ui.components.TypingDots()
                 StatusMessage(message, error = message != null)
             }
@@ -440,7 +485,7 @@ private fun EnrollDialog(vm: SecurityViewModel, phrases: List<String>) {
     )
 }
 
-private const val ENROLL_PHRASES = 3
+private const val ENROLL_PHRASES = 5
 
 @Composable
 private fun StatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, chip: @Composable () -> Unit) {

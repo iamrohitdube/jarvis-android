@@ -260,6 +260,47 @@ private fun WakeDiagnosticsPanel(vm: SettingsViewModel, s: AppSettings) {
             ) { Text(e.label) }
         }
     }
+    if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.HEY_JARVIS) {
+        val ready by vm.wakeModelReady.collectAsStateWithLifecycle()
+        val progress by vm.wakeModelProgress.collectAsStateWithLifecycle()
+        val dlError by vm.wakeModelError.collectAsStateWithLifecycle()
+        Hint(
+            "A small \"Hey Jarvis\" model that listens on the phone all the time, like \"Hey Siri\": no beeps, low battery, " +
+                "and nothing leaves the phone. Say \"Hey Jarvis\", wait for the sound, then ask."
+        )
+        when {
+            progress != null -> {
+                androidx.compose.material3.LinearProgressIndicator(progress = { progress ?: 0f }, modifier = Modifier.fillMaxWidth())
+                Hint("Downloading the wake model…")
+            }
+            !ready -> {
+                Button(onClick = { vm.downloadWakeModel(context) }) { Text("Download wake model (3.7 MB)") }
+                Hint("openWakeWord by David Scripka. Models are free for personal, non-commercial use (CC BY-NC-SA 4.0).")
+            }
+            else -> StatusChip("Wake model ready", ChipTone.GOOD)
+        }
+        dlError?.let { StatusMessage(it, error = true) }
+        if (ready) {
+            val personal by vm.hasPersonalCheck.collectAsStateWithLifecycle()
+            val prompt by vm.ownTrainPrompt.collectAsStateWithLifecycle()
+            val result by vm.ownTrainResult.collectAsStateWithLifecycle()
+            Text("Teach JARVIS your voice", style = MaterialTheme.typography.bodyLarge)
+            Hint(
+                "About 2 minutes: say \"Hey Jarvis\" 8 ways, read 4 short sentences, talk freely for 15 seconds, then stay quiet. " +
+                    "JARVIS learns your accent and your normal speech, so it misses you less and ignores conversation. " +
+                    "If it ever wakes by mistake, tap \"Not for me\" on the wake screen and it learns from that. Only numbers are kept, no audio."
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = { vm.trainOwnVoice(context) }, enabled = prompt == null) {
+                    Text(if (prompt != null) "Listening…" else if (personal) "Train again" else "Start")
+                }
+                if (personal && prompt == null) TextButton(onClick = { vm.removeOwnVoice(context) }) { Text("Remove") }
+            }
+            if (personal) StatusChip("Personal voice check on", ChipTone.GOOD)
+            prompt?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+            result?.let { StatusMessage(it, error = it.startsWith("Training failed")) }
+        }
+    }
     if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) {
         Hint(
             "Uses your phone's speech recognition, so it works with your voice. More battery than the keyword model. " +
@@ -320,7 +361,8 @@ private fun WakeDiagnosticsPanel(vm: SettingsViewModel, s: AppSettings) {
         }
     }
     Hint(
-        if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) "Strict: only wakes on \"Hey/Hi Jarvis\". Normal/Sensitive: any sentence with \"Jarvis\"."
+        if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) "Strict: only \"Hey/OK Jarvis\". Normal: \"Jarvis…\" or \"Hey Jarvis…\" at the start."
+        else if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.HEY_JARVIS) "Strict: needs a clear \"Hey Jarvis\" (fewest false wakes). Sensitive: catches quieter or faster speech."
         else "Missed often? Try Sensitive (always analysing, a bit more battery). Waking by itself? Try Strict."
     )
     androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -353,6 +395,13 @@ private fun WakeDiagnosticsPanel(vm: SettingsViewModel, s: AppSettings) {
         Text("Model", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         if (active) StatusChip("Analysing speech", ChipTone.BRAND) else StatusChip("Idle (quiet)")
     }
+    if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.HEY_JARVIS) {
+        val score by vm.wake.score.collectAsStateWithLifecycle()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Wake score (needs %.2f)".format(dev.jarvis.voice.OpenWakeWordEngine.thresholdOf(s.wakeSensitivity)), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Text("%.2f".format(score), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Heard \"Hey Jarvis\"", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Text("$heard time" + if (heard == 1) "" else "s", style = MaterialTheme.typography.bodyMedium)
@@ -361,6 +410,12 @@ private fun WakeDiagnosticsPanel(vm: SettingsViewModel, s: AppSettings) {
     val lastHeard by vm.wake.lastHeard.collectAsStateWithLifecycle()
     if (s.wakeEngine == dev.jarvis.voice.WakeEngineChoice.PHONE) {
         Hint("Last heard: " + (lastHeard?.let { "\"$it\"" } ?: "nothing yet"))
+        val lastWake by vm.wake.lastWake.collectAsStateWithLifecycle()
+        val lastWakeAt by vm.wake.lastWakeAt.collectAsStateWithLifecycle()
+        lastWake?.let { w ->
+            val at = lastWakeAt?.let { java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalTime().withNano(0) }
+            Hint("Last woke on: \"$w\"" + (at?.let { " at $it" } ?: ""))
+        }
     }
     Hint("Speak near the phone: the mic level should move and the model should switch to \"Analysing\" while you talk.")
     val testResult by vm.wakeTest.collectAsStateWithLifecycle()

@@ -231,7 +231,7 @@ class ChatViewModel @Inject constructor(
                 agent.run(context, text, settings.current()).collect { ev ->
                     when (ev) {
                         is AgentEvent.Routed -> live.update { it?.copy(status = routeLabel(ev)) }
-                        is AgentEvent.Authorized -> voice.onAuthorized(ev.screenOnly, ev.sensitive)
+                        is AgentEvent.Authorized -> voice.onAuthorized(ev.screenOnly, ev.sensitive, ev.byPin)
                         is AgentEvent.ToolActivity -> live.update { it?.copy(status = toolLabel(ev.toolName)) }
                         is AgentEvent.TextDelta -> {
                             live.update { it?.copy(text = it.text + ev.text) }
