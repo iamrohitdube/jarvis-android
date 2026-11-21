@@ -8,6 +8,13 @@ server. You bring your own Anthropic API key.
 > your INDmoney portfolio ("what's my net worth?") through INDmoney's MCP server, after a spoken PIN or your
 > fingerprint. Riding mode comes next. See [PROGRESS.md](PROGRESS.md) and the phase plan in [CLAUDE.md](CLAUDE.md).
 
+## Screenshots
+<p align="center">
+  <img src="docs/screenshots/home.png" width="280" alt="JARVIS home screen: greeting, animated arc-reactor orb, Talk to JARVIS button and quick actions">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/listening.png" width="280" alt="Push-to-talk: the orb and HUD rings react while JARVIS listens">
+</p>
+
 ## Features in this build
 - **"Hey Jarvis", hands-free:**
   - A small always-on wake model listens on the phone: no sounds, low battery, and no audio leaves the phone.
