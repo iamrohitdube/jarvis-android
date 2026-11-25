@@ -169,11 +169,17 @@ object AppModule {
     )
 
     @Provides @Singleton
+    fun callLog(@ApplicationContext c: Context, json: Json) = dev.jarvis.connectors.phone.CallLogConnector(
+        dev.jarvis.connectors.phone.AndroidCallLogSource(c.contentResolver), json,
+        granted = { hasPermissions(c, dev.jarvis.connectors.phone.CallLogConnector.PERMISSIONS) },
+    )
+
+    @Provides @Singleton
     fun connectors(
         indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
-        calendar: dev.jarvis.connectors.phone.CalendarConnector,
+        calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
     ): Map<String, @JvmSuppressWildcards Connector> =
-        listOf<Connector>(indMoney, gmail, drive, calendar).associateBy { it.id }
+        listOf<Connector>(indMoney, gmail, drive, calendar, callLog).associateBy { it.id }
 
     private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
         androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED

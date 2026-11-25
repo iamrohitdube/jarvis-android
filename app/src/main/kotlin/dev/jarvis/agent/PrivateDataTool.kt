@@ -33,12 +33,15 @@ object PrivateDataTool {
         CALENDAR_SEARCH("calendar_search", listOf("calendar_search")),
         DRIVE_RECENT("drive_recent", listOf("drive_recent")),
         DRIVE_SEARCH("drive_search", listOf("drive_search")),
+        CALLS_RECENT("calls_recent", listOf("calls_recent")),
+        CALLS_MISSED("calls_missed", listOf("calls_missed")),
+        CALLS_WITH("calls_with", listOf("calls_with")),
     }
 
     val definition = McpToolDef(
         name = NAME,
         description = "Hand the question to the user's phone when answering needs the user's OWN data: their money, " +
-            "email, calendar or Drive files. The phone answers the user privately and you will NOT see the result, so call it without " +
+            "email, calendar, Drive files or calls. The phone answers the user privately and you will NOT see the result, so call it without " +
             "writing any text first, and never guess or invent the user's numbers or emails. Kinds: net_worth (total, " +
             "invested, returns, profit or loss overall, allocation, liabilities); bank_balance (bank, savings, cash, " +
             "deposits); holdings (the stocks or funds they own, a single holding's value or P&L); sips (their SIPs, " +
@@ -46,7 +49,9 @@ object PrivateDataTool {
             "(latest emails in the inbox); email_search (emails from a sender or about a topic: put the sender or " +
             "topic in item); calendar_today (today's events, \"my day\"); calendar_upcoming (next meeting, this " +
             "week, tomorrow); calendar_search (when a specific event is: put its name in item); drive_recent (files they " +
-            "edited lately); drive_search (find a Drive file: put a word from its name in item). Pass several kinds " +
+            "edited lately); drive_search (find a Drive file: put a word from its name in item); calls_recent " +
+            "(recent calls, who called); calls_missed (missed calls); calls_with (calls with one person: put the " +
+            "name or number in item; also how long they talked). Pass several kinds " +
             "if the question covers several. For one specific stock or fund they own, pass its name as item. Don't " +
             "use it for public market questions (prices, fund facts) or general questions.",
         inputSchema = buildJsonObject {

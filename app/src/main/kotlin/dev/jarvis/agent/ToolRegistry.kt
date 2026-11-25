@@ -44,9 +44,10 @@ object ToolRegistry {
     const val GMAIL = "gmail"
     const val CALENDAR = "calendar"
     const val DRIVE = "drive"
+    const val CALLS = "calls"
 
     /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
-    val LOCAL_SOURCES = setOf(CALENDAR, "calls", "recordings", "sms", "notifications")
+    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, "recordings", "sms", "notifications")
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
@@ -87,6 +88,10 @@ object ToolRegistry {
         // Google Drive (D29 step 4): file names and dates only. Tier 1.
         local(DRIVE, ToolGroup.FILES, "drive_recent", "Recently edited Drive files", listOf("my drive", "recent files", "my files"), groupDefault = true, snapshot = true),
         local(DRIVE, ToolGroup.FILES, "drive_search", "Drive files by name", listOf("find the file", "find file", "file called", "document called", "sheet called"), itemArg = "query"),
+        // Call log (D30): the phone's own call history. Tier 1.
+        local(CALLS, ToolGroup.CALLS, "calls_recent", "Recent calls", listOf("recent calls", "call log", "call history", "who called"), groupDefault = true, snapshot = true),
+        local(CALLS, ToolGroup.CALLS, "calls_missed", "Missed calls in the last 7 days", listOf("missed call", "missed calls"), snapshot = true),
+        local(CALLS, ToolGroup.CALLS, "calls_with", "Calls with one person or number", listOf("last call with", "did i call", "did i talk to", "calls with"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
@@ -100,6 +105,7 @@ object ToolRegistry {
         ToolGroup.EMAIL to listOf("gmail", "my email", "my emails", "my inbox", "my mail"),
         ToolGroup.CALENDAR to listOf("my calendar", "my schedule", "my meetings", "my agenda"),
         ToolGroup.FILES to listOf("google drive", "my drive", "my files", "my documents"),
+        ToolGroup.CALLS to listOf("my calls", "call log", "phone calls"),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }

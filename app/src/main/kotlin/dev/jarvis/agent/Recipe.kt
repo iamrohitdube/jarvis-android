@@ -225,6 +225,7 @@ object Recipe {
         return when {
             "percent" in f || "pct" in f -> if (Regex("return|gain|pnl|change|xirr").containsMatchIn(f)) "spct" else "pct"
             "date" in f -> "date"
+            "duration" in f || f.endsWith("_s") || f.endsWith("seconds") -> "dur"
             "count" in f || "units" in f || "quantity" in f -> "num"
             MONEY.containsMatchIn(f) -> "inr"
             else -> "num"
@@ -234,7 +235,7 @@ object Recipe {
     private fun format(v: JsonElement, fmt: String): String {
         val p = v as? JsonPrimitive ?: throw RecipeException("not a plain value")
         return when (fmt) {
-            "inr", "pct", "spct", "num" -> formatNumber(number(p) ?: throw RecipeException("not a number"), fmt)
+            "inr", "pct", "spct", "num", "dur" -> formatNumber(number(p) ?: throw RecipeException("not a number"), fmt)
             "date" -> date(p.content)
             "label" -> FinanceAnswers.assetLabel(p.content)
             else -> p.content
@@ -246,6 +247,7 @@ object Recipe {
         "pct" -> trim(String.format(Locale.ENGLISH, "%.1f", v)) + "%"
         "spct" -> (if (v > 0) "+" else if (v < 0) "-" else "") + trim(String.format(Locale.ENGLISH, "%.1f", abs(v))) + "%"
         "date" -> trim(v.toString())
+        "dur" -> if (v < 60) "${v.toLong()} s" else if (v < 3600) "${(v / 60).toLong()} min" else "${(v / 3600).toLong()} h ${((v % 3600) / 60).toLong()} min"
         else -> if (v == Math.floor(v) && abs(v) < 1e15) v.toLong().toString() else trim(String.format(Locale.ENGLISH, "%.2f", v))
     }
 

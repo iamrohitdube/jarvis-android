@@ -21,6 +21,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Phone data (D29/D30), read-only and answered on the phone; each is asked for in Settings → Phone data. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
 
     <!-- Lets the app find a browser that supports Custom Tabs for OAuth sign-in (package visibility). -->
     <queries>

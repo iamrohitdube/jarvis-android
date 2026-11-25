@@ -519,7 +519,7 @@ class AgentLoop(
         private val PUBLIC_TOOLS = ToolRegistry.all.filter { it.connectorId == ToolRegistry.INDMONEY && !it.isPersonal }.map { it.name }
         const val RECIPE_ACTIVITY = "recipe"
         /** Groups whose answers may come from a recipe (D32). Email keeps its triage templates. */
-        val RECIPE_GROUPS = setOf(ToolGroup.FINANCE, ToolGroup.CALENDAR)
+        val RECIPE_GROUPS = setOf(ToolGroup.FINANCE, ToolGroup.CALENDAR, ToolGroup.CALLS)
         private const val PHONE = "live·phone"
         private val EMPTY_ARGS = JsonObject(emptyMap())
         /** Shown as the "model" for answers made on the phone. */

@@ -253,7 +253,10 @@ fun PhoneDataSection(vm: SettingsViewModel) {
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
         vm.refreshLocalSources()
-        denied = if (result.values.any { !it }) "Not allowed. If Android doesn't ask again, open JARVIS's app settings → Permissions." else null
+        denied = if (result.values.any { !it }) {
+            "Not allowed. Android limits call log, SMS and notification access for apps installed from a file: open " +
+                "App settings → ⋮ (top right) → Allow restricted settings, then come back and tap Allow again."
+        } else null
     }
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { vm.refreshLocalSources(); onPauseOrDispose { } }
     SettingsCard(

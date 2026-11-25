@@ -127,6 +127,7 @@ object PhoneAnswers {
         ToolGroup.EMAIL -> EmailAnswers.render(spec.name, raw, item, now)
         ToolGroup.CALENDAR -> CalendarAnswers.render(spec.name, raw, now)
         ToolGroup.FILES -> DriveAnswers.render(spec.name, raw, now)
+        ToolGroup.CALLS -> CallAnswers.render(spec.name, raw, now)
         else -> FinanceAnswers.render(spec.name, raw, question, item)
     }
 }
