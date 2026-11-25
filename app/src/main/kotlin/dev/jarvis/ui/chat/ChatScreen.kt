@@ -111,13 +111,6 @@ import dev.jarvis.ui.icons.AppIcons
 
 private val MicPermission = Manifest.permission.RECORD_AUDIO
 
-private val Suggestions = listOf(
-    "What's my net worth?",
-    "How are my SIPs doing?",
-    "Best large-cap funds?",
-    "Explain SIP vs lump sum",
-)
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(
@@ -228,14 +221,7 @@ fun ChatScreen(
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         if (state.messages.isEmpty() && voiceState != VoiceState.LISTENING) {
-                            HomeState(
-                            recent = recent.map { it.id to it.title },
-                            onSuggestion = { vm.send(it) },
-                            onOpen = vm::open,
-                            onSeeAll = onOpenHistory,
-                            onMic = onMic,
-                            micEnabled = vm.sttAvailable,
-                        )
+                            HomeState(onMic = onMic, micEnabled = vm.sttAvailable)
                         } else {
                             LazyColumn(
                                 state = listState,
@@ -424,23 +410,9 @@ private fun DrawerContent(
 private fun DrawerLink(label: String, icon: ImageVector, onClick: () -> Unit) =
     NavigationDrawerItem(label = { Text(label) }, icon = { Icon(icon, null) }, selected = false, onClick = onClick)
 
-/** Quick actions on the home screen: label, icon, what to ask. */
-private val QuickActions = listOf(
-    Triple("Net worth", AppIcons.Savings, "What's my net worth?"),
-    Triple("My SIPs", AppIcons.BarChart, "How are my SIPs doing?"),
-)
-
-/** Home (no messages yet): greeting with the orb, talk button, quick-action cards and recent chats. */
-@OptIn(ExperimentalLayoutApi::class)
+/** Home (no messages yet): the orb, a greeting and the talk button. Nothing else; chats are in the menu. */
 @Composable
-private fun HomeState(
-    recent: List<Pair<Long, String>>,
-    onSuggestion: (String) -> Unit,
-    onOpen: (Long) -> Unit,
-    onSeeAll: () -> Unit,
-    onMic: () -> Unit,
-    micEnabled: Boolean,
-) {
+private fun HomeState(onMic: () -> Unit, micEnabled: Boolean) {
     var shown by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
     val greeting = when (LocalTime.now().hour) {
@@ -448,117 +420,28 @@ private fun HomeState(
         in 12..16 -> "Good afternoon."
         else -> "Good evening."
     }
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            AnimatedVisibility(shown, enter = fadeIn() + slideInVertically { it / 3 }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(greeting, style = MaterialTheme.typography.headlineMedium)
-                        Text(
-                            "What can I do for you?", style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    JarvisOrb(104.dp)
-                }
-            }
-        }
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 6.dp),
-            ) {
+    Box(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
+        AnimatedVisibility(shown, enter = fadeIn() + slideInVertically { it / 8 }) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                JarvisOrb(168.dp)
+                Spacer(Modifier.height(28.dp))
+                Text(greeting, style = MaterialTheme.typography.headlineMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "How can I help?", style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                Spacer(Modifier.height(32.dp))
                 if (micEnabled) {
                     Surface(
                         onClick = onMic, shape = CircleShape, color = Color.Transparent,
-                        modifier = Modifier.height(48.dp).clip(CircleShape)
+                        modifier = Modifier.height(52.dp).clip(CircleShape)
                             .background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Brand.Cyan, Brand.Blue))),
                     ) {
-                        Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(AppIcons.Mic, null, tint = Color(0xFF00121F), modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Talk to JARVIS", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00121F))
-                        }
-                    }
-                }
-                Surface(
-                    onClick = { onSuggestion("What's the time?") }, shape = CircleShape, color = Color.Transparent,
-                    modifier = Modifier.size(48.dp).glass(CircleShape),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(AppIcons.Timer, "What's the time?", tint = Brand.Cyan, modifier = Modifier.size(20.dp))
-                    }
-                }
-                Surface(
-                    onClick = onSeeAll, shape = CircleShape, color = Color.Transparent,
-                    modifier = Modifier.size(48.dp).glass(CircleShape),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(AppIcons.History, "All chats", tint = Brand.Cyan, modifier = Modifier.size(20.dp))
-                    }
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                QuickActions.forEach { (label, icon, ask) ->
-                    Surface(
-                        onClick = { onSuggestion(ask) }, shape = MaterialTheme.shapes.extraLarge, color = Color.Transparent,
-                        modifier = Modifier.weight(1f).height(150.dp).glass(MaterialTheme.shapes.extraLarge),
-                    ) {
-                        Column(Modifier.padding(16.dp)) {
-                            Row {
-                                Box(Modifier.size(40.dp).glass(CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(icon, null, tint = Brand.Cyan, modifier = Modifier.size(20.dp))
-                                }
-                                Spacer(Modifier.weight(1f))
-                                Icon(AppIcons.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
-                            }
-                            Spacer(Modifier.weight(1f))
-                            Text(label, style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
-                }
-            }
-        }
-        if (recent.isNotEmpty()) {
-            item {
-                Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Recent chats", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onSeeAll) { Text("See all", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-            }
-            items(recent.take(4), key = { it.first }) { (id, title) ->
-                Surface(
-                    onClick = { onOpen(id) }, shape = MaterialTheme.shapes.large, color = Color.Transparent,
-                    modifier = Modifier.fillMaxWidth().glass(MaterialTheme.shapes.large),
-                ) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(38.dp).glass(CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(AppIcons.ChatBubbleOutline, null, tint = Brand.Cyan, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Icon(AppIcons.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-                    }
-                }
-            }
-        } else {
-            item {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 8.dp),
-                ) {
-                    Suggestions.forEach { s ->
-                        Surface(onClick = { onSuggestion(s) }, shape = CircleShape, color = Color.Transparent, modifier = Modifier.glass(CircleShape)) {
-                            Text(s, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
                         }
                     }
                 }
