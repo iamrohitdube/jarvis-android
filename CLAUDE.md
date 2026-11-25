@@ -110,8 +110,8 @@ File guard: the assistant has no access to the app's key storage or other apps' 
 - Reading/summarising allowed (Tier 1). Sending only after voice confirmation:
   1. Speak channel, recipient, and the FULL draft.
   2. User must say a specific phrase ("send it"). A bare "yes" is not enough.
-  3. Recipients not on the trusted list need an extra check on the confirmation (voice match was removed in D33;
-     decide the check when messaging is built).
+  3. Recipients not on the trusted list need a tap on the screen to confirm; "send it" by voice works only for
+     trusted contacts (D34; voice match was removed in D33).
   4. 5-10 s send delay with "cancel" available. Silence/noise/unclear = do NOT send.
   5. If several contacts match, ask which BEFORE drafting.
 - Optional allowlist for automatic replies (specific contacts and canned types only; never money, legal,

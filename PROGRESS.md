@@ -54,12 +54,20 @@
   phone unlocked (no prompt), and the spoken PIN from the lock screen / pocket.
   - Device: net worth works without a PIN on the unlocked phone (user, 2026-11-25). Finance answers on an
     unlocked phone are now spoken too (user request).
-- [ ] Step 4: Calendar (phone calendar via CalendarContract, user pick 2026-11-25), then Drive metadata
+- [x] Step 4: Calendar (CalendarContract) and Google Drive metadata search (2026-11-26). Needs device test.
 - [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
   is the only brain; personal data still answered on the phone via `private_data` (D29 update).
-- [ ] Step 6: consent + redaction settings
-- [ ] Step 7: call log, then call recordings (D30)
-- [ ] Step 8: SMS / notification messaging with confirmations (CLAUDE.md section 7)
+- [x] Step 6: consent + redaction settings, Private mode (2026-11-26). Needs device test.
+- [x] Step 7: call log, then call recordings with on-phone transcripts (D30, 2026-11-26). Needs device test.
+- [x] Step 8: SMS / notification messaging with confirmed sending (CLAUDE.md section 7, 2026-11-26). Needs device test.
+- **Phase 6 code complete (D34), 376 unit tests, 0 failures.** Device checklist:
+  - Calendar: allow, "what's on today?", "when is my dentist appointment?"
+  - Drive: sign in on the Drive card (add the Drive API + scope in Google Cloud first), "find the budget sheet"
+  - Calls: allow (maybe "Allow restricted settings" first), "who called?", "missed calls", "last call with Mom"
+  - Recordings: choose the dialer folder, Transcribe, "what did Rahul say about the deadline?"
+  - Messages: allow SMS + notification access; "any WhatsApp messages?"; "text Mom I'm on my way" (check the
+    full draft, "send it", the countdown, Cancel); reply to a WhatsApp with its notification showing
+  - Privacy: Private mode on/off; allow one feature and check the first-send preview
 
 ## Next: Phase 6c, JARVIS features (D31, user-approved 2026-11-25), one at a time
 1 People view, 2 meeting prep, 3 missed-call follow-ups, 4 watch list, 5 night debrief, 6 location routines,

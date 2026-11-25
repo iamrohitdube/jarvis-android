@@ -495,7 +495,7 @@ The user asked to say the PIN out loud. CLAUDE.md section 6 requires "spoken PIN
   digit answer is used.
 
 ## D29: Personal data stays on the phone (Gmail, Calendar, Drive, INDmoney), 2026-11-22
-**Status: step 2 (INDmoney) built 2026-11-22; step 3 (Gmail) built 2026-11-25; later steps proposed. Choices marked "pick" need the
+**Status: all steps built (2026-11-22 to 2026-11-26, see D34); device tests pending. Choices marked "pick" need the
 user's answer before the matching step.**
 This changes CLAUDE.md section 2 (connectors via the Anthropic MCP connector) and section 12, Phase 6.
 
@@ -686,3 +686,26 @@ says to speak it only when alone.
   "didn't catch" (no lockout penalty);
 - JARVIS now says why instead of staying silent: "Spoken PIN isn't set up…" (models missing) and, after 3 tries,
   "I couldn't get it. Type your PIN, or use fingerprint."
+
+## D34: Phase 6 completed: calendar, Drive, calls, messaging, consent (2026-11-26)
+All built in one pass at the user's request ("complete entire phase 6"); each step its own commit. Device tests pending.
+- **Phone data base (`LocalConnector`):** sources read from Android with a runtime permission, no account; asked for
+  in Settings → Phone data. Call log, SMS and notification access are "restricted" for apps installed from a file;
+  the UI points to App info → ⋮ → Allow restricted settings.
+- **Calendar:** `CalendarContract.Instances` (recurring events expanded, declined skipped, all-day kept as dates).
+- **Drive:** files.list with `drive.metadata.readonly`; Gmail and Drive authorised separately so adding one never
+  breaks the other.
+- **Call log:** provider limit parameter; unknown callers shown as "number ending 1234".
+- **Call recordings:** the user picks the dialer's folder (one persisted SAF read grant); audio decoded in 20 s
+  pieces and transcribed with one loaded Moonshine model (English); transcripts in Room (v3), never sent to Claude,
+  not even to recipes.
+- **Messaging:** SMS inbox + chat notifications (known chat apps, one-time codes skipped, kept 3 days). Sending:
+  Claude gets one action tool, `send_message`; the phone resolves the recipient (asks which before drafting),
+  shows/reads the full draft, requires "send it" (voice only for trusted contacts, otherwise a tap), counts down 5 s
+  with cancel, limits 20/hour, has an off switch, and logs every send (`sent_messages`). Chat replies only through
+  the app's own notification reply action while it shows. Sending needs the screen: hands-free sending is off for
+  now (riding mode, Phase 5b, will revisit). No auto-replies (the optional allowlist is not built).
+- **Consent (step 6):** per feature, default never. With consent, data is redacted on the phone (`Redactor`) and
+  the first send per feature is previewed exactly; turning consent on needs fingerprint/screen lock. Private mode
+  blocks all personal reads.
+- Recipes (D32) now also cover calendar and call-log questions; email keeps its triage templates.
