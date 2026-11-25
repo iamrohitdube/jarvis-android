@@ -13,7 +13,7 @@ import kotlinx.serialization.json.putJsonObject
 
 /**
  * Smart routing (D29, option B): Claude categorises every question and gets this tool for anything that needs the
- * user's own money data. Calling it hands the question back to the phone, which runs the security gate and answers
+ * user's own data (money, email). Calling it hands the question back to the phone, which runs the security gate and answers
  * ON THE PHONE. Claude never receives the result: the turn ends with the phone's answer.
  */
 object PrivateDataTool {
@@ -25,18 +25,23 @@ object PrivateDataTool {
         HOLDINGS("holdings", listOf("networth_holdings")),
         SIPS("sips", listOf("mf_sips", "indian_stocks_sips")),
         WATCHLIST("watchlist", listOf("user_watchlist")),
+        UNREAD_EMAIL("unread_email", listOf("gmail_unread")),
+        RECENT_EMAIL("recent_email", listOf("gmail_recent")),
+        EMAIL_SEARCH("email_search", listOf("gmail_search")),
     }
 
     val definition = McpToolDef(
         name = NAME,
-        description = "Hand the question to the user's phone when answering needs the user's OWN financial data. " +
-            "The phone answers the user privately and you will NOT see the result, so call it without writing any " +
-            "text first, and never guess or invent the user's numbers. Kinds: net_worth (total, invested, returns, " +
-            "profit or loss overall, allocation, liabilities); bank_balance (bank, savings, cash, deposits); holdings " +
-            "(the stocks or funds they own, a single holding's value or P&L); sips (their SIPs, monthly investments, " +
-            "next instalment); watchlist. Pass several kinds if the question covers several. If they ask about one " +
-            "specific stock or fund they own, also pass its name as item. Don't use it for public market questions " +
-            "(prices, fund facts) or general finance questions.",
+        description = "Hand the question to the user's phone when answering needs the user's OWN data: their money " +
+            "or their email. The phone answers the user privately and you will NOT see the result, so call it without " +
+            "writing any text first, and never guess or invent the user's numbers or emails. Kinds: net_worth (total, " +
+            "invested, returns, profit or loss overall, allocation, liabilities); bank_balance (bank, savings, cash, " +
+            "deposits); holdings (the stocks or funds they own, a single holding's value or P&L); sips (their SIPs, " +
+            "monthly investments, next instalment); watchlist; unread_email (unread count, new emails); recent_email " +
+            "(latest emails in the inbox); email_search (emails from a sender or about a topic: put the sender or " +
+            "topic in item). Pass several kinds if the question covers several. For one specific stock or fund they " +
+            "own, pass its name as item. Don't use it for public market questions (prices, fund facts) or general " +
+            "questions.",
         inputSchema = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
@@ -50,7 +55,7 @@ object PrivateDataTool {
                 }
                 putJsonObject("item") {
                     put("type", "string")
-                    put("description", "Optional: one specific stock or fund the user owns, by name.")
+                    put("description", "Optional: one stock or fund the user owns, or for email_search the sender or topic (a few words).")
                 }
             }
             putJsonArray("required") { add("kinds") }

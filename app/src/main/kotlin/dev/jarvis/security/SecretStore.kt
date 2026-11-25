@@ -18,6 +18,11 @@ enum class SecretKey(val id: String) {
     PIN_FAILED_ATTEMPTS("pin_failed_attempts"),
     /** Voice-match voiceprint: an embedding vector (not audio), for the spoken-PIN path. */
     VOICE_PRINT("voice_print"),
+    /**
+     * Marker that the user linked Google ("1"). Not a token: Google Play services holds the grant and hands out
+     * 1-hour access tokens on request (D29), so the app stores no Google token at all.
+     */
+    GOOGLE_LINKED("google_linked"),
 }
 
 /** Encrypted key/value storage for secrets (CLAUDE.md: Storage interface, swappable). */

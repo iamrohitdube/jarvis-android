@@ -495,7 +495,7 @@ The user asked to say the PIN out loud. CLAUDE.md section 6 requires "spoken PIN
   digit answer is used.
 
 ## D29: Personal data stays on the phone (Gmail, Calendar, Drive, INDmoney), 2026-11-22
-**Status: step 2 (INDmoney) built 2026-11-22; Google steps still proposed. Choices marked "pick" need the
+**Status: step 2 (INDmoney) built 2026-11-22; step 3 (Gmail) built 2026-11-25; later steps proposed. Choices marked "pick" need the
 user's answer before the matching step.**
 This changes CLAUDE.md section 2 (connectors via the Anthropic MCP connector) and section 12, Phase 6.
 
@@ -561,6 +561,7 @@ the phone, with a preview the first time. The default is nothing personal. No ne
   (`READ_CALENDAR` permission). There's no Google Cloud scope, no token, it works offline, and it covers every
   account on the phone. Read-only now. Writes (Tier 3) come later through the same provider. **Pick:** this, or
   the Calendar API with `calendar.readonly`.
+  **User picked `CalendarContract` (phone's calendar), 2026-11-25.**
 
 **Weekly re-login.** In "Testing" status Google ends a test user's grant 7 days after consent. The plan is to
 publish the Cloud project "In production" without verification. That's allowed for personal use under 100 users,

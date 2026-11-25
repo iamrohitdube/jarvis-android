@@ -65,6 +65,7 @@ import dev.jarvis.ui.security.PinSection
 import dev.jarvis.ui.security.SecurityViewModel
 import dev.jarvis.ui.settings.ApiKeySection
 import dev.jarvis.ui.settings.ConnectorsSection
+import dev.jarvis.ui.settings.GmailSection
 import dev.jarvis.ui.settings.SettingsViewModel
 import dev.jarvis.ui.theme.Brand
 import dev.jarvis.ui.theme.withBrandGradient
@@ -147,6 +148,7 @@ fun OnboardingScreen(
                     onToggle = { expanded = if (expanded == OnboardingStep.CONNECTORS) null else OnboardingStep.CONNECTORS }) {
                     Hint("Sign in, then tap Test. Optional: you can connect later in Settings.")
                     ConnectorsSection(vm, onConnectorOk = { vm.setStep(OnboardingStep.CONNECTORS, StepStatus.DONE) })
+                    GmailSection(vm, onConnectorOk = { vm.setStep(OnboardingStep.CONNECTORS, StepStatus.DONE) })
                     if (steps.getValue(OnboardingStep.CONNECTORS) == StepStatus.TODO) {
                         TextButton(onClick = { vm.setStep(OnboardingStep.CONNECTORS, StepStatus.SKIPPED) }) { Text("Skip for now") }
                     }

@@ -114,4 +114,65 @@ class PrivateDataTest {
         // The token went only to INDmoney.
         repeat(indmoney.requestCount) { assertEquals("Bearer $token", indmoney.takeRequest().headers["Authorization"]) }
     }
+
+    @Test fun noGoogleTokenOrEmailContentEverReachesAnthropic() = runBlocking {
+        val googleToken = "ya-GOOGLE-TOKEN-9911"
+        val subject = "SECRET-SUBJECT-5150"
+        val sender = "Zed Q Privatesender"
+        val gmailServer = MockWebServer()
+        gmailServer.dispatcher = object : mockwebserver3.Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.url.encodedPath.endsWith("/messages")) json("""{"messages":[{"id":"a1"}],"resultSizeEstimate":1}""")
+                else json(
+                    """{"id":"a1","labelIds":["INBOX","UNREAD"],"snippet":"see you","internalDate":"1764000000000",""" +
+                        """"payload":{"headers":[{"name":"From","value":"$sender <zed@example.com>"},{"name":"Subject","value":"$subject"}]}}"""
+                )
+        }
+        gmailServer.start()
+        try {
+            val tokens = object : dev.jarvis.connectors.google.GoogleTokenSource {
+                override suspend fun accessToken() = googleToken
+                override suspend fun clearToken(token: String) {}
+            }
+            val gmail = dev.jarvis.connectors.google.GmailConnector(
+                FakeSecretStore(mapOf(SecretKey.GOOGLE_LINKED to "1")), tokens,
+                dev.jarvis.connectors.google.GmailApi(http, testJson, gmailServer.url("/").toString().trimEnd('/')), testJson,
+            )
+            val llm = AnthropicClient(http, testJson, apiKeyProvider = { "sk-test" }, baseUrl = anthropic.url("/").toString().trimEnd('/'), maxRetries = 0)
+            val history = HistoryStore(db.history())
+            val agent = AgentLoop(llm, mapOf(gmail.id to gmail), tempUsageMeter(db), allowAll, snapshots = SnapshotStore(db.snapshots()))
+
+            // Claude hands both questions back; the second is a follow-up that carries the first in history.
+            anthropic.enqueue(stream(toolUseStream("e1", "private_data", """{"kinds":["unread_email"]}""")))
+            anthropic.enqueue(stream(toolUseStream("e2", "private_data", """{"kinds":["email_search"],"item":"Zed"}""")))
+
+            val conversation = history.startConversation("chat")
+            suspend fun ask(q: String): AgentEvent {
+                val context = history.contextTurns(conversation)
+                history.addUserMessage(conversation, q)
+                val last = agent.run(context, q, AppSettings()).toList().last()
+                if (last is AgentEvent.Finished) {
+                    history.addAssistantMessage(conversation, last.text, last.model, last.costUsd, last.dataStamps, sensitive = last.sensitive, screenOnly = last.screenOnly)
+                }
+                return last
+            }
+            val unread = ask("any new emails?") as AgentEvent.Finished
+            assertTrue(unread.text, unread.text.contains(subject) && unread.text.contains(sender))
+            val search = ask("anything from Zed?") as AgentEvent.Finished
+            assertTrue(search.text, search.text.contains(subject))
+
+            assertEquals(2, anthropic.requestCount)
+            repeat(anthropic.requestCount) {
+                val r = anthropic.takeRequest()
+                val all = r.text() + r.headers.toString()
+                listOf(googleToken, subject, sender, "zed@example.com", "see you").forEach { secret ->
+                    assertFalse("Anthropic request contains $secret", all.contains(secret))
+                }
+            }
+            // The Google token went only to Gmail.
+            repeat(gmailServer.requestCount) { assertEquals("Bearer $googleToken", gmailServer.takeRequest().headers["Authorization"]) }
+        } finally {
+            gmailServer.close()
+        }
+    }
 }

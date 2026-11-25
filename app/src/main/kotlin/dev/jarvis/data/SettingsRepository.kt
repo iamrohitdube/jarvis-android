@@ -71,6 +71,8 @@ data class AppSettings(
     val wakeAck: dev.jarvis.voice.WakeAck = dev.jarvis.voice.WakeAck.CHIME,
     val wakeAckPhrase: String = "Yes?",
     val onboarding: Map<OnboardingStep, StepStatus> = OnboardingStep.entries.associateWith { StepStatus.TODO },
+    /** Gmail privacy filter (D29): senders never cached or shown, comma separated. Banks by default. */
+    val emailExcludedSenders: String = dev.jarvis.connectors.google.EmailFilter.DEFAULT_EXCLUDED_SENDERS.joinToString(", "),
 ) {
     val onboardingComplete: Boolean get() = onboarding.values.none { it == StepStatus.TODO }
 
@@ -98,6 +100,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             monthlyBudgetUsd = p[BUDGET] ?: AppSettings.DEFAULT_BUDGET_USD,
             stopAtBudget = p[STOP_AT_BUDGET] ?: true,
             snapshotMaxAgeMinutes = p[SNAPSHOT_MINUTES] ?: AppSettings.DEFAULT_SNAPSHOT_MINUTES,
+            emailExcludedSenders = p[EMAIL_EXCLUDED_SENDERS] ?: AppSettings().emailExcludedSenders,
             policyLevel = p[POLICY_LEVEL]?.let { runCatching { PolicyLevel.valueOf(it) }.getOrNull() } ?: PolicyLevel.SMART,
             toolRules = ToolPolicy.decode(p[TOOL_RULES]),
             personalSessionMinutes = p[PERSONAL_MINUTES] ?: 5,
@@ -128,6 +131,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setMonthlyBudget(usd: Double) = store.edit { it[BUDGET] = usd.coerceAtLeast(0.0) }
     suspend fun setStopAtBudget(v: Boolean) = store.edit { it[STOP_AT_BUDGET] = v }
     suspend fun setSnapshotMaxAgeMinutes(v: Int) = store.edit { it[SNAPSHOT_MINUTES] = v.coerceIn(0, 24 * 60) }
+    suspend fun setEmailExcludedSenders(v: String) = store.edit { it[EMAIL_EXCLUDED_SENDERS] = v.take(2000) }
     suspend fun setPolicyLevel(v: PolicyLevel) = store.edit { it[POLICY_LEVEL] = v.name }
     suspend fun setToolRule(tool: String, rule: ToolRule) = store.edit { p ->
         val rules = ToolPolicy.decode(p[TOOL_RULES]).toMutableMap().apply { if (rule == ToolRule.DEFAULT) remove(tool) else put(tool, rule) }
@@ -159,6 +163,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val BUDGET = doublePreferencesKey("monthly_budget_usd")
         val STOP_AT_BUDGET = booleanPreferencesKey("stop_at_budget")
         val SNAPSHOT_MINUTES = intPreferencesKey("snapshot_max_age_minutes")
+        val EMAIL_EXCLUDED_SENDERS = stringPreferencesKey("email_excluded_senders")
         val POLICY_LEVEL = stringPreferencesKey("policy_level")
         val TOOL_RULES = stringPreferencesKey("tool_rules")
         val PERSONAL_MINUTES = intPreferencesKey("session_personal_minutes")

@@ -17,6 +17,10 @@ import dev.jarvis.claude.UsageMeter
 import dev.jarvis.connectors.Connector
 import dev.jarvis.connectors.McpClient
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
+import dev.jarvis.connectors.google.EmailFilter
+import dev.jarvis.connectors.google.GmailApi
+import dev.jarvis.connectors.google.GmailConnector
+import dev.jarvis.connectors.google.GoogleAuthorizer
 import dev.jarvis.connectors.oauth.OAuthClient
 import dev.jarvis.data.AuditLog
 import dev.jarvis.data.SettingsRepository
@@ -49,6 +53,7 @@ import dev.jarvis.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -139,8 +144,19 @@ object AppModule {
         IndMoneyConnector(secrets, oauth, mcp, audit = audit)
 
     @Provides @Singleton
-    fun connectors(indMoney: IndMoneyConnector): Map<String, @JvmSuppressWildcards Connector> =
-        mapOf(indMoney.id to indMoney)
+    fun googleAuthorizer(@ApplicationContext c: Context) = GoogleAuthorizer(c)
+
+    @Provides @Singleton
+    fun gmail(secrets: SecretStore, google: GoogleAuthorizer, http: OkHttpClient, json: Json, settings: SettingsRepository, audit: AuditLog) =
+        GmailConnector(
+            secrets, google, GmailApi(http, json), json,
+            excludedSenders = { EmailFilter.parseSenders(settings.settings.first().emailExcludedSenders) },
+            audit = audit,
+        )
+
+    @Provides @Singleton
+    fun connectors(indMoney: IndMoneyConnector, gmail: GmailConnector): Map<String, @JvmSuppressWildcards Connector> =
+        mapOf(indMoney.id to indMoney, gmail.id to gmail)
 
     @Provides @Singleton
     fun sessionManager() = SessionManager()

@@ -151,6 +151,58 @@ fun ConnectorsSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
     }
 }
 
+/** Gmail (D29): Google sign-in through Play services, a free test read, and the privacy filter. Read-only. */
+@Composable
+fun GmailSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
+    val status by vm.gmailStatus.collectAsStateWithLifecycle()
+    val message by vm.gmailMessage.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val consent = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> vm.completeGoogleSignIn(result.data, onConnectorOk) }
+    var senders by remember(settings?.emailExcludedSenders) { mutableStateOf(settings?.emailExcludedSenders.orEmpty()) }
+
+    SettingsCard(
+        "Gmail", AppIcons.Mail,
+        subtitle = "Unread, latest and emails from someone (read-only, answered on the phone)",
+        tint = MaterialTheme.colorScheme.secondary,
+        trailing = {
+            when (status) {
+                ConnectorStatus.Connected -> StatusChip("Connected", ChipTone.GOOD)
+                ConnectorStatus.NotConnected -> StatusChip("Not connected")
+                ConnectorStatus.NeedsReauth -> StatusChip("Expired", ChipTone.WARN)
+            }
+        },
+    ) {
+        Hint("Needs your own Google Cloud project first (docs/setup-keys.md, section 3). JARVIS reads only sender, subject and preview; emails never go to Claude.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    vm.startGoogleSignIn({ pi ->
+                        consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())
+                    }, onConnectorOk)
+                },
+                enabled = !busy,
+            ) { Text(if (status == ConnectorStatus.NotConnected) "Sign in" else "Sign in again") }
+            if (status != ConnectorStatus.NotConnected) {
+                OutlinedButton(onClick = { vm.testGmail(onConnectorOk) }, enabled = !busy) { Text("Test") }
+                TextButton(onClick = vm::signOutGmail, enabled = !busy) { Text("Sign out") }
+            }
+        }
+        StatusMessage(message, error = message?.let { "Couldn't" in it || "failed" in it.lowercase() } == true)
+        Hint("Never shown or saved: one-time codes, promotions, and these senders (comma separated):")
+        androidx.compose.material3.OutlinedTextField(
+            senders, { senders = it }, label = { Text("Excluded senders") },
+            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(), minLines = 2,
+        )
+        OutlinedButton(
+            onClick = { vm.setEmailExcludedSenders(senders) },
+            enabled = senders != settings?.emailExcludedSenders,
+        ) { Text("Save filter") }
+    }
+}
+
 private fun openCustomTab(context: Context, url: String) {
     CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, url.toUri())
 }

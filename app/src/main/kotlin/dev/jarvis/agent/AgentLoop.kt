@@ -136,8 +136,9 @@ class AgentLoop(
         val toolDefs = mutableListOf<McpToolDef>()
         connectors[ToolRegistry.INDMONEY]?.let { indmoney ->
             if (indmoney.status.first() != ConnectorStatus.NotConnected) toolDefs += indmoney.toolDefinitions(PUBLIC_TOOLS)
-            toolDefs += PrivateDataTool.definition
         }
+        // Offered whenever the phone has a personal connector (connected or not: the phone then says how to sign in).
+        if (connectors.isNotEmpty()) toolDefs += PrivateDataTool.definition
         val runnable = toolDefs.map { it.name }.filter { it != PrivateDataTool.NAME }.toSet()
         emit(AgentEvent.Routed(route.model, emptyList()))
 
@@ -294,6 +295,8 @@ class AgentLoop(
         }
     }
 
+    private fun nowZoned() = java.time.Instant.ofEpochMilli(clock()).atZone(zone)
+
     private class Flags(val sensitive: Boolean, val screenOnly: Boolean, val byPin: Boolean)
 
     /**
@@ -307,9 +310,10 @@ class AgentLoop(
         item: String? = null,
     ) {
         val renderAs = if (bankFocus) "bank balance" else question
-        // Only whole-account reads run on the phone; anything narrower is answered from the overall snapshot.
-        val reads = personal.filter { it.snapshot }.ifEmpty {
-            listOfNotNull(ToolRegistry.byName(NET_WORTH_TOOL)?.takeIf { s -> s.connectorId == personal.first().connectorId })
+        // Whole-account reads run on the phone, plus item tools (email search) when an item was given; anything
+        // narrower is answered from the connector's default read (net worth, latest emails).
+        val reads = personal.filter { it.snapshot || (it.itemArg != null && item != null) }.ifEmpty {
+            listOfNotNull(ToolRegistry.defaultFor(personal.first().connectorId))
         }
         val fresh = if (snapshots != null && !ToolRouter.wantsFresh(question)) {
             snapshots.freshFor(reads, settings.snapshotMaxAgeMinutes * 60_000L)?.associateBy { it.tool }
@@ -327,13 +331,15 @@ class AgentLoop(
             val saved = fresh?.get(spec.name)
             if (saved != null) {
                 audit.record(AuditEvent(AuditCategory.TOOL, "cache_hit", "ok", tool = spec.name, tier = spec.tier.name, detail = "cached"))
-                parts += FinanceAnswers.render(spec.name, saved.content, renderAs, item)
+                parts += PhoneAnswers.render(spec, saved.content, renderAs, item, nowZoned())
                 stamps += DataStamp(source, spec.name, saved.fetchedAt, cached = true)
                 continue
             }
             if (connector == null) continue
             emit(AgentEvent.ToolActivity(spec.name))
-            when (val r = connector.callTool(spec.name, EMPTY_ARGS)) {
+            val itemArg = spec.itemArg
+            val args = if (itemArg != null && item != null) buildJsonObject { put(itemArg, item) } else EMPTY_ARGS
+            when (val r = connector.callTool(spec.name, args)) {
                 is ConnectorCall.Ok -> {
                     audit.record(AuditEvent(AuditCategory.TOOL, "call", if (r.toolError) "error" else "ok", tool = spec.name, tier = spec.tier.name, detail = PHONE))
                     debugLog?.invoke("${spec.name} shape: " + JsonShape.describe(r.text))
@@ -343,8 +349,8 @@ class AgentLoop(
                         continue
                     }
                     val now = clock()
-                    snapshots?.save(cid, spec.name, r.text, now)
-                    parts += FinanceAnswers.render(spec.name, r.text, renderAs, item)
+                    if (spec.snapshot) snapshots?.save(cid, spec.name, r.text, now)
+                    parts += PhoneAnswers.render(spec, r.text, renderAs, item, nowZoned())
                     stamps += DataStamp(source, spec.name, now, cached = false)
                 }
                 ConnectorCall.NeedsSignIn -> {
@@ -355,15 +361,17 @@ class AgentLoop(
                 }
                 is ConnectorCall.Failed -> {
                     audit.record(AuditEvent(AuditCategory.TOOL, "call", "error", tool = spec.name, tier = spec.tier.name, detail = PHONE))
-                    val old = snapshots?.latest(cid, spec.name)
+                    // An item search (email from X) has no saved result of its own: filter the default read's instead.
+                    val fallbackSpec = if (spec.snapshot) spec else ToolRegistry.defaultFor(cid) ?: spec
+                    val old = snapshots?.latest(cid, fallbackSpec.name)
                     if (old == null) {
                         auditRequest("error:connector", null, cid, LOCAL_MODEL)
                         emit(AgentEvent.Failed(AgentError.Network(r.message), parts.joinToString("\n\n")))
                         return
                     }
                     parts += "Couldn't reach $source, so this is from ${ageLabel(clock() - old.fetchedAt)}.\n" +
-                        FinanceAnswers.render(spec.name, old.content, renderAs, item)
-                    stamps += DataStamp(source, spec.name, old.fetchedAt, cached = true)
+                        PhoneAnswers.render(fallbackSpec, old.content, renderAs, item, nowZoned())
+                    stamps += DataStamp(source, fallbackSpec.name, old.fetchedAt, cached = true)
                     outcome = "offline_saved"
                 }
             }
@@ -449,7 +457,6 @@ class AgentLoop(
         const val MAX_TOOL_ROUNDS = 4
         /** Tool results sent back to Claude are clipped (public market data; keeps requests small). */
         const val MAX_TOOL_RESULT_CHARS = 8_000
-        private const val NET_WORTH_TOOL = "networth_snapshot"
         /** Sent instead of an answer that was made on the phone from personal data. */
         const val PRIVATE_ANSWER = "[answered privately on the phone]"
         /** Public market tools Claude may ask the phone to run. */

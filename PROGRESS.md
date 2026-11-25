@@ -18,8 +18,24 @@
     **279 unit tests, 0 failures**; APK SHA-256 `0bae585d…85ea89`, served on :8770
   - user chose option B: Claude categorises every question; `private_data` hands personal ones back to the phone;
     follow-ups keep the question, never the answer; phrase list only offline/over budget. **280 tests, 0 failures**
-- [ ] Step 3: Google sign-in + Gmail read-only
-- [ ] Step 4: Calendar, then Drive metadata
+- [x] Step 3: Google sign-in + Gmail read-only (code done 2026-11-25; **297 unit tests, 0 failures**; not yet built
+  or device-tested: needs the user's Google Cloud project, docs/setup-keys.md section 3)
+  - `GoogleAuthorizer`: play-services-auth 22.0.0 Authorization API, scope `gmail.readonly` only. Play services
+    holds the grant and hands out 1-hour tokens; the app stores no Google token (only a "linked" marker).
+  - `GmailApi`: messages.list + messages.get `format=metadata` (From, Subject) and snippet. Never bodies/attachments.
+  - `GmailConnector`: tools gmail_unread, gmail_recent (cached snapshots, offline with age label), gmail_search
+    (sender/topic from Claude's `item`; offline it filters the saved latest list). 401 -> clear token, retry once,
+    then "sign in again". Offers no tools to Claude.
+  - `EmailFilter` (before caching/showing): one-time codes and 2FA mails always dropped; promotions excluded in the
+    query; excluded senders editable in Settings (banks by default). Replies say how many were hidden.
+  - `EmailAnswers`: on-phone templates (count, latest 5, search hits), sender names without addresses.
+  - `private_data` kinds unread_email, recent_email, email_search; prompt updated. Email is Tier 1 (recent unlock).
+  - Settings + setup wizard: Gmail card (sign in, test, sign out, excluded senders).
+  - Tests: connector against a mock Gmail (metadata only, filter, retry, reauth), templates, filter, and an
+    end-to-end test proving no Google token, sender, subject or snippet reaches Anthropic.
+  - Not done (later): excluded Gmail labels (only senders/promotions now), "Private mode" switch (step 6).
+  - **Device test needed:** Google Cloud setup, sign-in, "any new emails?", "emails from X", offline answer.
+- [ ] Step 4: Calendar (phone calendar via CalendarContract, user pick 2026-11-25), then Drive metadata
 - [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
   is the only brain; personal data still answered on the phone via `private_data` (D29 update).
 - [ ] Step 6: consent + redaction settings

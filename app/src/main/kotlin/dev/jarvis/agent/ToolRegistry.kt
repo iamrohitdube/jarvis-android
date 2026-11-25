@@ -1,7 +1,7 @@
 package dev.jarvis.agent
 
-/** Tool groups from CLAUDE.md section 4. Only FINANCE has tools in Phase 1. */
-enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, MESSAGING, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
+/** Tool groups from CLAUDE.md section 4. */
+enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, CALLS, MESSAGING, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
 
 enum class RiskLevel { READ, WRITE, ACTION }
 
@@ -28,6 +28,11 @@ data class ToolSpec(
      * snapshot and reused for a short time. Live market data is never a snapshot tool.
      */
     val snapshot: Boolean = false,
+    /**
+     * Tool argument filled from the hand-back's `item` (e.g. the Gmail search query). Such a tool only runs when an
+     * item is given; without one the connector's default read answers instead.
+     */
+    val itemArg: String? = null,
 ) {
     /** The user's own connector data (above Tier 0): answered on the phone, never sent to Claude (D29). */
     val isPersonal: Boolean get() = connectorId != null && tier != AuthTier.OPEN
@@ -36,6 +41,7 @@ data class ToolSpec(
 /** The skill/tool catalog. The agent only ever sees the tools the router selects. */
 object ToolRegistry {
     const val INDMONEY = "indmoney"
+    const val GMAIL = "gmail"
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
@@ -62,6 +68,12 @@ object ToolRegistry {
         indmoney("get_mf_by_category", "Mutual fund rankings by category", AuthTier.OPEN, listOf("best fund", "top fund", "fund ranking", "category", "best mutual fund")),
         indmoney("get_mf_funds_details", "Mutual fund profile, returns, holdings", AuthTier.OPEN, listOf("mutual fund", "fund details", "nav", "expense ratio")),
         indmoney("get_us_stocks_details", "Live US stock data", AuthTier.OPEN, listOf("us stock", "nasdaq", "nyse", "s&p", "dow jones")),
+        // Gmail (D29 step 3): read-only headers and snippets, fetched and answered on the phone. Tier 1.
+        gmail("gmail_unread", "Unread inbox count and the latest unread emails (sender, subject, time)",
+            listOf("unread", "new email", "new emails", "new mail", "any email", "any emails", "any mail"), snapshot = true),
+        gmail("gmail_recent", "Latest inbox emails (sender, subject, time)",
+            listOf("my email", "my emails", "my inbox", "latest email", "recent email", "last email"), groupDefault = true, snapshot = true),
+        gmail("gmail_search", "Emails matching a sender or topic", listOf("email from", "emails from", "mail from", "mails from"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
@@ -72,9 +84,13 @@ object ToolRegistry {
             "indmoney", "my money", "my investments", "my investment", "my finances", "my portfolio", "sip",
             "portfolio", "net worth", "networth",
         ),
+        ToolGroup.EMAIL to listOf("gmail", "my email", "my emails", "my inbox", "my mail"),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }
+
+    /** The connector's default whole-account read (net worth, latest emails): answers when nothing narrower can. */
+    fun defaultFor(connectorId: String?): ToolSpec? = all.firstOrNull { it.connectorId == connectorId && it.groupDefault }
 
     private fun indmoney(
         name: String, description: String, tier: AuthTier, keywords: List<String>,
@@ -83,5 +99,14 @@ object ToolRegistry {
         name = name, description = description, group = ToolGroup.FINANCE, risk = RiskLevel.READ, tier = tier,
         confirmationRequired = false, connectorId = INDMONEY, keywords = keywords,
         groupDefault = groupDefault, helper = helper, snapshot = snapshot,
+    )
+
+    private fun gmail(
+        name: String, description: String, keywords: List<String>,
+        groupDefault: Boolean = false, snapshot: Boolean = false, itemArg: String? = null,
+    ) = ToolSpec(
+        name = name, description = description, group = ToolGroup.EMAIL, risk = RiskLevel.READ, tier = AuthTier.PERSONAL,
+        confirmationRequired = false, connectorId = GMAIL, keywords = keywords,
+        groupDefault = groupDefault, snapshot = snapshot, itemArg = itemArg,
     )
 }

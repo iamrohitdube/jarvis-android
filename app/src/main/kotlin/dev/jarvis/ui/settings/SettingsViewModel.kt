@@ -38,6 +38,8 @@ class SettingsViewModel @Inject constructor(
     private val secrets: SecretStore,
     private val llm: LlmClient,
     private val indMoney: IndMoneyConnector,
+    private val gmail: dev.jarvis.connectors.google.GmailConnector,
+    private val google: dev.jarvis.connectors.google.GoogleAuthorizer,
     private val signInEvents: SignInEvents,
     private val snapshots: SnapshotStore,
     private val history: HistoryStore,
@@ -334,6 +336,11 @@ class SettingsViewModel @Inject constructor(
     val indMoneyStatus: StateFlow<ConnectorStatus> = indMoney.status
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
 
+    val gmailStatus: StateFlow<ConnectorStatus> = gmail.status
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
+    /** Result line for the Gmail card. */
+    val gmailMessage = MutableStateFlow<String?>(null)
+
     /** Result line for the key test ("Key works." / error). */
     val keyMessage = MutableStateFlow<String?>(null)
     /** Result line for connector actions; also receives browser sign-in outcomes. */
@@ -393,6 +400,40 @@ class SettingsViewModel @Inject constructor(
         indMoney.setManualToken(token)
         signInEvents.post("Token saved (encrypted). Tap Test to check it.")
     }
+
+    /** Google sign-in: Play services either grants at once or returns a consent screen for the UI to launch. */
+    fun startGoogleSignIn(launchConsent: (android.app.PendingIntent) -> Unit, onOk: () -> Unit = {}) = launchBusy {
+        gmailMessage.value = "Asking Google…"
+        when (val r = google.authorize()) {
+            dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Granted -> { gmail.markLinked(); testGmailNow(onOk) }
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.NeedsUser -> { gmailMessage.value = null; launchConsent(r.pendingIntent) }
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Failed ->
+                gmailMessage.value = "Couldn't start Google sign-in: ${r.message}. Check the Android client in Google Cloud (docs/setup-keys.md 3.3)."
+        }
+    }
+
+    /** The consent screen's result. */
+    fun completeGoogleSignIn(data: android.content.Intent?, onOk: () -> Unit = {}) = launchBusy {
+        if (google.completeFromIntent(data)) { gmail.markLinked(); testGmailNow(onOk) }
+        else gmailMessage.value = "Google sign-in was cancelled or failed."
+    }
+
+    fun testGmail(onOk: () -> Unit = {}) = launchBusy { testGmailNow(onOk) }
+
+    private suspend fun testGmailNow(onOk: () -> Unit) {
+        gmailMessage.value = "Testing Gmail…"
+        when (val r = gmail.test()) {
+            ConnectorTestResult.Ok -> { gmailMessage.value = "Gmail works."; onOk() }
+            is ConnectorTestResult.Failed -> gmailMessage.value = "Couldn't read Gmail: ${r.message}"
+        }
+    }
+
+    fun signOutGmail() = launchBusy {
+        gmail.signOut()
+        gmailMessage.value = "Gmail disconnected on this phone. To remove access fully: myaccount.google.com/connections."
+    }
+
+    fun setEmailExcludedSenders(v: String) = viewModelScope.launch { repo.setEmailExcludedSenders(v) }
 
     fun signOutIndMoney() = launchBusy {
         indMoney.signOut()

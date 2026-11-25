@@ -42,7 +42,7 @@ object Modes {
     val DETAIL = Mode(
         id = "detail",
         instructions = "Mode: detail. The user asked for more: answer fully but compactly, at most about 6 spoken sentences.",
-        allowedGroups = setOf(ToolGroup.FINANCE),
+        allowedGroups = setOf(ToolGroup.FINANCE, ToolGroup.EMAIL),
         maxTokens = 1500,
         effort = "low",
         style = OutputStyle.NORMAL,
@@ -51,7 +51,7 @@ object Modes {
     val CHAT = Mode(
         id = "chat",
         instructions = "Mode: chat. Use tools when the question needs the user's own data or live market data.",
-        allowedGroups = setOf(ToolGroup.FINANCE),
+        allowedGroups = setOf(ToolGroup.FINANCE, ToolGroup.EMAIL),
         // Thinking and tool calls count toward this cap; the spoken answer itself is short (persona).
         maxTokens = 1200,
         effort = "low",
