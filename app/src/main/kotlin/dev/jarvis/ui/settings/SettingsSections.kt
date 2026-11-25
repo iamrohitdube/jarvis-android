@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -243,6 +244,41 @@ fun DriveSection(vm: SettingsViewModel) {
     }
 }
 
+/** Call recordings (D30): pick the dialer's recordings folder, then transcribe on the phone. */
+@Composable
+fun RecordingsSection(vm: SettingsViewModel) {
+    val status by vm.localStatus.collectAsStateWithLifecycle()
+    val done by vm.transcribedCount.collectAsStateWithLifecycle()
+    val pending by vm.pendingRecordings.collectAsStateWithLifecycle()
+    val progress by vm.transcribeProgress.collectAsStateWithLifecycle()
+    val message by vm.recordingsMessage.collectAsStateWithLifecycle()
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> vm.setRecordingsFolder(uri) }
+    LaunchedEffect(Unit) { vm.refreshPendingRecordings() }
+    val chosen = status[dev.jarvis.agent.ToolRegistry.RECORDINGS] == ConnectorStatus.Connected
+    SettingsCard(
+        "Call recordings", AppIcons.Mic,
+        subtitle = "Search what was said in calls your dialer recorded",
+        tint = MaterialTheme.colorScheme.secondary,
+        trailing = { if (chosen) StatusChip("$done transcribed", ChipTone.GOOD) else StatusChip("No folder") },
+    ) {
+        Hint("JARVIS can't record calls (Android blocks it). Turn on call recording in your phone's dialer, then pick the folder it saves to. Transcripts are made on the phone (English) and never sent to Claude.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { picker.launch(null) }) { Text(if (chosen) "Change folder" else "Choose folder") }
+            if (chosen) Button(onClick = vm::transcribeRecordings, enabled = progress == null) {
+                Text(if (pending > 0) "Transcribe $pending" else "Transcribe")
+            }
+        }
+        progress?.let { p ->
+            androidx.compose.material3.LinearProgressIndicator(progress = { p.done.toFloat() / p.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth())
+            Hint("Transcribing ${p.done + 1} of ${p.total}" + (p.current?.let { ": $it" } ?: "") + ". Keep JARVIS open.")
+        }
+        if (chosen && done > 0) TextButton(onClick = vm::deleteTranscripts) { Text("Delete transcripts") }
+        StatusMessage(message)
+    }
+}
+
 /** Phone data (D29/D30): each source is read on the phone with an Android permission; nothing leaves the phone. */
 @Composable
 fun PhoneDataSection(vm: SettingsViewModel) {
@@ -264,7 +300,7 @@ fun PhoneDataSection(vm: SettingsViewModel) {
         subtitle = "Read on the phone and answered on the phone; never sent to Claude",
         tint = MaterialTheme.colorScheme.secondary,
     ) {
-        vm.localSources.forEach { source ->
+        vm.localSources.filter { it.permissions.isNotEmpty() }.forEach { source ->
             val ok = status[source.id] == ConnectorStatus.Connected
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {

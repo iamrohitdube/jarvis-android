@@ -429,7 +429,7 @@ class AgentLoop(
         var reply = parts.joinToString("\n\n").ifBlank { "Nothing to show." }
         var cost = 0.0
         // A smarter reply for any phrasing (D32), when the data came through and the question is about money.
-        if (allowRecipe && recipes != null && outcome == "ok" && raws.size == reads.size && reads.all { it.group in RECIPE_GROUPS }) {
+        if (allowRecipe && recipes != null && outcome == "ok" && raws.size == reads.size && reads.all { it.group in RECIPE_GROUPS && it.connectorId !in NO_RECIPE_SOURCES }) {
             emit(AgentEvent.ToolActivity(RECIPE_ACTIVITY))
             recipeAnswer(raws, question, item, settings)?.let { (text, usd) -> reply = text; cost = usd }
         }
@@ -520,6 +520,8 @@ class AgentLoop(
         const val RECIPE_ACTIVITY = "recipe"
         /** Groups whose answers may come from a recipe (D32). Email keeps its triage templates. */
         val RECIPE_GROUPS = setOf(ToolGroup.FINANCE, ToolGroup.CALENDAR, ToolGroup.CALLS)
+        /** Free text (call transcripts) is answered by templates only, never shaped by a recipe. */
+        val NO_RECIPE_SOURCES = setOf(ToolRegistry.RECORDINGS)
         private const val PHONE = "live·phone"
         private val EMPTY_ARGS = JsonObject(emptyMap())
         /** Shown as the "model" for answers made on the phone. */

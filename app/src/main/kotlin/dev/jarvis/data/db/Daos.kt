@@ -128,3 +128,58 @@ interface UsageDao {
     @Query("DELETE FROM usage_log")
     suspend fun deleteAll()
 }
+
+@Dao
+interface TranscriptDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(t: TranscriptEntity)
+
+    @Query("SELECT * FROM transcripts WHERE uri = :uri")
+    suspend fun get(uri: String): TranscriptEntity?
+
+    @Query("SELECT * FROM transcripts ORDER BY recordedAt DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<TranscriptEntity>
+
+    @Query("SELECT uri FROM transcripts")
+    suspend fun knownUris(): List<String>
+
+    @Query("SELECT COUNT(*) FROM transcripts WHERE status = 'done'")
+    fun doneCount(): Flow<Int>
+
+    @Query("DELETE FROM transcripts")
+    suspend fun deleteAll()
+}
+
+@Dao
+interface CapturedMessageDao {
+    @Insert
+    suspend fun insert(m: CapturedMessageEntity): Long
+
+    @Query("SELECT * FROM captured_messages WHERE at >= :since ORDER BY at DESC LIMIT :limit")
+    suspend fun since(since: Long, limit: Int): List<CapturedMessageEntity>
+
+    /** Drop a notification's reply handle once it's gone (the reply action no longer works). */
+    @Query("UPDATE captured_messages SET replyKey = NULL WHERE replyKey = :key")
+    suspend fun clearReplyKey(key: String)
+
+    @Query("DELETE FROM captured_messages WHERE at < :before")
+    suspend fun deleteOlderThan(before: Long)
+
+    @Query("DELETE FROM captured_messages")
+    suspend fun deleteAll()
+}
+
+@Dao
+interface SentMessageDao {
+    @Insert
+    suspend fun insert(m: SentMessageEntity): Long
+
+    @Query("UPDATE sent_messages SET sentAt = :sentAt, outcome = :outcome WHERE id = :id")
+    suspend fun finish(id: Long, sentAt: Long?, outcome: String)
+
+    @Query("SELECT COUNT(*) FROM sent_messages WHERE approvedAt >= :since AND outcome = 'sent'")
+    suspend fun sentSince(since: Long): Int
+
+    @Query("SELECT * FROM sent_messages ORDER BY approvedAt DESC LIMIT :limit")
+    fun recent(limit: Int): Flow<List<SentMessageEntity>>
+}

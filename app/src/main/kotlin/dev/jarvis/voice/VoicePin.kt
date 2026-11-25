@@ -170,8 +170,27 @@ class VoicePinEngine(
     private suspend fun recognizeDigits(audio: FloatArray): String? = runMoonshine(audio)?.let { PinSpeech.digits(it) }
 
     private suspend fun runMoonshine(audio: FloatArray): String? = withContext(Dispatchers.Default) {
+        val recognizer = newMoonshine()
+        try { decodeWith(recognizer, audio) } finally { recognizer.release() }
+    }
+
+    /**
+     * Transcribes many pieces with ONE loaded model (long call recordings, D30). Null when the models aren't
+     * downloaded. Runs on the phone; text is never logged.
+     */
+    suspend fun <T> withTranscriber(block: suspend (transcribe: suspend (FloatArray) -> String) -> T): T? {
+        if (!models.installed()) return null
+        val recognizer = withContext(Dispatchers.Default) { newMoonshine() }
+        try {
+            return block { audio -> withContext(Dispatchers.Default) { decodeWith(recognizer, audio) } }
+        } finally {
+            recognizer.release()
+        }
+    }
+
+    private fun newMoonshine(): OfflineRecognizer {
         val dir = models.dir.absolutePath
-        val recognizer = OfflineRecognizer(
+        return OfflineRecognizer(
             null,
             OfflineRecognizerConfig(
                 featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
@@ -186,17 +205,16 @@ class VoicePinEngine(
                 ),
             ),
         )
+    }
+
+    private fun decodeWith(recognizer: OfflineRecognizer, audio: FloatArray): String {
+        val stream = recognizer.createStream()
         try {
-            val stream = recognizer.createStream()
-            try {
-                stream.acceptWaveform(audio, SAMPLE_RATE)
-                recognizer.decode(stream)
-                recognizer.getResult(stream).text
-            } finally {
-                stream.release()
-            }
+            stream.acceptWaveform(audio, SAMPLE_RATE)
+            recognizer.decode(stream)
+            return recognizer.getResult(stream).text
         } finally {
-            recognizer.release()
+            stream.release()
         }
     }
 

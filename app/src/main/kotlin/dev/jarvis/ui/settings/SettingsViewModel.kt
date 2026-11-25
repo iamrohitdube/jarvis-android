@@ -40,6 +40,9 @@ class SettingsViewModel @Inject constructor(
     private val llm: LlmClient,
     private val indMoney: IndMoneyConnector,
     private val connectors: Map<String, @JvmSuppressWildcards dev.jarvis.connectors.Connector>,
+    private val recordingIndexer: dev.jarvis.connectors.phone.RecordingIndexer,
+    private val transcripts: dev.jarvis.data.db.TranscriptDao,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val gmail: dev.jarvis.connectors.google.GmailConnector,
     private val drive: dev.jarvis.connectors.google.DriveConnector,
     private val google: dev.jarvis.connectors.google.GoogleAuth,
@@ -348,6 +351,50 @@ class SettingsViewModel @Inject constructor(
 
     /** After a permission dialog (or returning from Android settings). */
     fun refreshLocalSources() = localSources.forEach { it.refreshStatus() }
+
+    // ---- Call recordings (D30) ----
+    val transcribedCount: StateFlow<Int> = transcripts.doneCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val transcribeProgress = recordingIndexer.progress
+    val recordingsMessage = MutableStateFlow<String?>(null)
+    val pendingRecordings = MutableStateFlow(0)
+
+    /** The folder picked in the system picker: keep a read grant to it only (any older folder is released). */
+    fun setRecordingsFolder(uri: android.net.Uri?) = viewModelScope.launch {
+        if (uri == null) return@launch
+        val resolver = appContext.contentResolver
+        resolver.persistedUriPermissions.filter { it.uri != uri }.forEach {
+            runCatching { resolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        runCatching { resolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            .onFailure { recordingsMessage.value = "Couldn't keep access to that folder. Try picking it again." }
+        refreshLocalSources()
+        refreshPendingRecordings()
+        audit.record(AuditEvent(AuditCategory.DATA, "recordings_folder", "set"))
+    }
+
+    fun refreshPendingRecordings() = viewModelScope.launch {
+        pendingRecordings.value = runCatching { recordingIndexer.pending().size }.getOrDefault(0)
+    }
+
+    fun transcribeRecordings() = viewModelScope.launch {
+        recordingsMessage.value = null
+        val s = recordingIndexer.run(maxFiles = 10)
+        recordingsMessage.value = when {
+            s.noModels -> "Download the voice models first (Security → Spoken PIN). Transcription runs on the phone."
+            s.transcribed == 0 && s.failed == 0 -> "Nothing new to transcribe."
+            else -> "Transcribed ${s.transcribed}" + (if (s.failed > 0) ", ${s.failed} couldn't be read" else "") +
+                (if (s.remaining > 0) ". ${s.remaining} left: tap again." else ".")
+        }
+        audit.record(AuditEvent(AuditCategory.DATA, "transcribe_recordings", "ok", detail = "${s.transcribed}/${s.failed}"))
+        refreshPendingRecordings()
+    }
+
+    fun deleteTranscripts() = viewModelScope.launch {
+        transcripts.deleteAll()
+        recordingsMessage.value = "Transcripts deleted. The recordings themselves are untouched."
+        audit.record(AuditEvent(AuditCategory.DATA, "delete_transcripts", "ok"))
+        refreshPendingRecordings()
+    }
 
     val gmailStatus: StateFlow<ConnectorStatus> = gmail.status
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)

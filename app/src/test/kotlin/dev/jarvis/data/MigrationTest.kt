@@ -50,7 +50,7 @@ class MigrationTest {
         }
     }
 
-    @Test fun v1HistorySurvivesTheUpgradeToV2() = runBlocking {
+    @Test fun v1HistorySurvivesTheUpgradeToTheCurrentVersion() = runBlocking {
         val file = File.createTempFile("jarvis-migration", ".db").apply { delete() }
         createV1(file.path)
         val db = Room.databaseBuilder<JarvisDatabase>(file.path)
@@ -62,6 +62,10 @@ class MigrationTest {
             assertEquals(listOf("what's my net worth", "About 12 lakh."), messages.map { it.text })
             assertFalse(messages.any { it.sensitive || it.screenOnly }) // new columns default to false
             assertEquals("Net worth", db.history().observeConversations().first().single().title)
+            // v3 tables exist after the upgrade.
+            db.transcripts().upsert(dev.jarvis.data.db.TranscriptEntity("content://r/1", "Mom", 1, 2, "hello", "done", 3))
+            assertEquals(1, db.transcripts().doneCount().first())
+            assertEquals(0, db.sentMessages().sentSince(0))
         } finally {
             db.close()
             file.delete()

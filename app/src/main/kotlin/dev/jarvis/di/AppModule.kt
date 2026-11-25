@@ -175,11 +175,45 @@ object AppModule {
     )
 
     @Provides @Singleton
+    fun transcriptDao(db: JarvisDatabase) = db.transcripts()
+
+    @Provides @Singleton
+    fun capturedMessageDao(db: JarvisDatabase) = db.capturedMessages()
+
+    @Provides @Singleton
+    fun sentMessageDao(db: JarvisDatabase) = db.sentMessages()
+
+    /** The recordings folder is the app's one persisted read grant (Storage Access Framework). */
+    private fun recordingsFolder(c: Context): android.net.Uri? =
+        c.contentResolver.persistedUriPermissions.firstOrNull { it.isReadPermission }?.uri
+
+    @Provides @Singleton
+    fun recordingIndexer(@ApplicationContext c: Context, dao: dev.jarvis.data.db.TranscriptDao, voicePin: VoicePinEngine) =
+        dev.jarvis.connectors.phone.RecordingIndexer(
+            store = { recordingsFolder(c)?.let { dev.jarvis.connectors.phone.SafRecordingStore(c, it) } },
+            dao = dao,
+            transcriber = { uri ->
+                voicePin.withTranscriber { transcribe ->
+                    val text = StringBuilder()
+                    val ms = dev.jarvis.voice.AudioDecoder.decode(c, android.net.Uri.parse(uri)) { chunk ->
+                        text.append(transcribe(chunk).trim()).append(' ')
+                    }
+                    text.toString() to ms
+                }
+            },
+        )
+
+    @Provides @Singleton
+    fun recordings(@ApplicationContext c: Context, dao: dev.jarvis.data.db.TranscriptDao, indexer: dev.jarvis.connectors.phone.RecordingIndexer, json: Json) =
+        dev.jarvis.connectors.phone.RecordingsConnector(dao, indexer, json, granted = { recordingsFolder(c) != null })
+
+    @Provides @Singleton
     fun connectors(
         indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
         calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
+        recordings: dev.jarvis.connectors.phone.RecordingsConnector,
     ): Map<String, @JvmSuppressWildcards Connector> =
-        listOf<Connector>(indMoney, gmail, drive, calendar, callLog).associateBy { it.id }
+        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings).associateBy { it.id }
 
     private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
         androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED

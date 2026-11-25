@@ -36,6 +36,8 @@ object PrivateDataTool {
         CALLS_RECENT("calls_recent", listOf("calls_recent")),
         CALLS_MISSED("calls_missed", listOf("calls_missed")),
         CALLS_WITH("calls_with", listOf("calls_with")),
+        RECORDINGS_RECENT("recordings_recent", listOf("recordings_recent")),
+        RECORDINGS_SEARCH("recordings_search", listOf("recordings_search")),
     }
 
     val definition = McpToolDef(
@@ -51,7 +53,9 @@ object PrivateDataTool {
             "week, tomorrow); calendar_search (when a specific event is: put its name in item); drive_recent (files they " +
             "edited lately); drive_search (find a Drive file: put a word from its name in item); calls_recent " +
             "(recent calls, who called); calls_missed (missed calls); calls_with (calls with one person: put the " +
-            "name or number in item; also how long they talked). Pass several kinds " +
+            "name or number in item; also how long they talked); recordings_recent (latest call recordings); " +
+            "recordings_search (what was said in a recorded call: put the topic, or the person and topic, in item). " +
+            "Pass several kinds " +
             "if the question covers several. For one specific stock or fund they own, pass its name as item. Don't " +
             "use it for public market questions (prices, fund facts) or general questions.",
         inputSchema = buildJsonObject {

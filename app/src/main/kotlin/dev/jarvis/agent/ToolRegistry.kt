@@ -45,9 +45,10 @@ object ToolRegistry {
     const val CALENDAR = "calendar"
     const val DRIVE = "drive"
     const val CALLS = "calls"
+    const val RECORDINGS = "recordings"
 
     /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
-    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, "recordings", "sms", "notifications")
+    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, RECORDINGS, "sms", "notifications")
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
@@ -92,6 +93,9 @@ object ToolRegistry {
         local(CALLS, ToolGroup.CALLS, "calls_recent", "Recent calls", listOf("recent calls", "call log", "call history", "who called"), groupDefault = true, snapshot = true),
         local(CALLS, ToolGroup.CALLS, "calls_missed", "Missed calls in the last 7 days", listOf("missed call", "missed calls"), snapshot = true),
         local(CALLS, ToolGroup.CALLS, "calls_with", "Calls with one person or number", listOf("last call with", "did i call", "did i talk to", "calls with"), itemArg = "query"),
+        // Call recordings (D30): on-phone transcripts of what the dialer recorded. Tier 1.
+        local(RECORDINGS, ToolGroup.CALLS, "recordings_recent", "Latest transcribed call recordings", listOf("call recordings", "recorded calls"), snapshot = true),
+        local(RECORDINGS, ToolGroup.CALLS, "recordings_search", "Calls whose recording mentions something", listOf("in the call", "on the call", "said on"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
