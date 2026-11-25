@@ -2,19 +2,14 @@ package dev.jarvis.connectors.google
 
 /**
  * Privacy filter for email (D29), applied on the phone BEFORE anything is cached or shown: one-time codes and
- * two-factor mails are always dropped, and so are senders on the user's exclusion list (banks by default).
- * Promotions are excluded in the Gmail query itself ([PROMOTIONS_QUERY]).
+ * two-factor mails are always dropped, and so are senders on the user's exclusion list (empty by default: the user
+ * wants bank and card statements, 2026-11-25). Promotions are excluded in the Gmail query itself ([PROMOTIONS_QUERY]).
  */
 object EmailFilter {
     const val PROMOTIONS_QUERY = "-category:promotions"
 
-    /** Default excluded senders: Indian and global banks and card issuers. The user can edit this in Settings. */
-    val DEFAULT_EXCLUDED_SENDERS = listOf(
-        "hdfcbank", "icicibank", "sbi.co.in", "onlinesbi", "axisbank", "kotak", "yesbank", "indusind",
-        "idfcfirstbank", "pnbindia", "pnb.co.in", "bankofbaroda", "aubank", "rblbank", "federalbank", "hsbc", "citibank",
-        "citi.com", "@sc.com",
-        "americanexpress", "amex",
-    )
+    /** Default excluded senders: none. The user can add senders in Settings. */
+    val DEFAULT_EXCLUDED_SENDERS: List<String> = emptyList()
 
     private val CODE_PATTERNS = listOf(
         Regex("\\botp\\b"), Regex("one[- ]time (password|passcode|code|pin)"), Regex("verification code"),

@@ -78,16 +78,41 @@ class GmailConnector(
             else -> return ConnectorCall.Failed("Unknown Gmail tool")
         }
         return withToken { token ->
-            val page = api.search(token, query, FETCH)
+            val page = api.search(token, query, if (name == SEARCH) FETCH_SEARCH else FETCH)
             val kept = EmailFilter.apply(page.messages, excludedSenders())
             val result = InboxResult(
                 estimate = page.estimate,
                 query = if (name == SEARCH) query.removeSuffix(" ${EmailFilter.PROMOTIONS_QUERY}") else null,
-                messages = kept,
+                messages = triage(token, kept),
                 hidden = page.messages.size - kept.size,
             )
             ConnectorCall.Ok(json.encodeToString(InboxResult.serializer(), result), toolError = false)
         }
+    }
+
+    /**
+     * Sorts emails by importance on the phone and fills in bills' amount and due date. When the snippet lacks them,
+     * the bill's text is read (at most [MAX_BODY_READS] per call) and only the two values are kept.
+     */
+    private suspend fun triage(token: String, emails: List<EmailHeader>): List<EmailHeader> {
+        var bodyReads = 0
+        val tagged = emails.map { e ->
+            val kind = EmailTriage.classify(e)
+            if (kind != EmailTriage.Kind.BILL) return@map e.copy(kind = kind.name)
+            val head = e.subject + " " + e.snippet
+            var amount = EmailTriage.extractAmount(head)
+            var due = EmailTriage.extractDueDate(head)
+            if ((amount == null || due == null) && e.id.isNotBlank() && bodyReads < MAX_BODY_READS) {
+                bodyReads++
+                val body = runCatching { api.bodyText(token, e.id) }.getOrNull()
+                if (body != null) {
+                    amount = amount ?: EmailTriage.extractAmount(body)
+                    due = due ?: EmailTriage.extractDueDate(body)
+                }
+            }
+            e.copy(kind = kind.name, amount = amount, due = due)
+        }
+        return EmailTriage.sort(tagged)
     }
 
     /** Gets a token, retries once with a fresh one if Gmail rejects it, and maps failures. */
@@ -121,7 +146,7 @@ class GmailConnector(
     /** No tools are offered to Claude: Gmail is answered on the phone only (D29). */
     override suspend fun toolDefinitions(names: Collection<String>): List<McpToolDef> = emptyList()
 
-    /** Free check (no Claude call): reads the newest inbox message's headers. */
+    /** Free check (no Claude call): reads the latest inbox headers. */
     override suspend fun test(): ConnectorTestResult = when (val r = callTool(RECENT, JsonObject(emptyMap()))) {
         is ConnectorCall.Ok -> ConnectorTestResult.Ok
         ConnectorCall.NeedsSignIn -> ConnectorTestResult.Failed("Google access is missing or expired. Sign in again.", needsReauth = true)
@@ -139,8 +164,11 @@ class GmailConnector(
         const val UNREAD = "gmail_unread"
         const val RECENT = "gmail_recent"
         const val SEARCH = "gmail_search"
-        /** Messages fetched per call (headers only). */
-        const val FETCH = 10
+        /** Messages fetched per inbox call (headers only), enough to find the important ones among the noise. */
+        const val FETCH = 25
+        const val FETCH_SEARCH = 10
+        /** Bills whose text may be read per call to find the amount and due date. */
+        const val MAX_BODY_READS = 4
 
         /** Keeps a search to plain words (the sender or topic Claude passed); no quotes or operators beyond from:. */
         internal fun cleanQuery(raw: String): String? =

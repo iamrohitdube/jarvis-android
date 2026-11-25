@@ -41,7 +41,10 @@ class GmailConnectorTest {
         "m2" to listOf("HDFC Bank <alerts@hdfcbank.net>", "Statement ready", "Your statement", "true"),
         "m3" to listOf("Shop <noreply@shop.example>", "Your OTP is 482913", "Do not share", "true"),
         "m4" to listOf("\"Priya Sharma\" <priya@example.com>", "Lunch on Friday?", "Are you free", "false"),
+        "m5" to listOf("Airtel <ebill@airtel.com>", "Your Airtel bill is ready", "View your bill online", "true"),
     )
+    /** The bill's text (format=full): the amount and due date are only in here. */
+    private val billBody = "Dear customer, Amount due Rs. 1,178.82. Due date 05/12/2026. Account 5550001004."
     /** Tokens accepted by the fake Gmail; anything else gets 401. */
     private val validTokens = mutableSetOf("tok-1")
 
@@ -58,6 +61,10 @@ class GmailConnectorTest {
                 }
                 val id = path.substringAfterLast('/')
                 val m = inbox[id] ?: return MockResponse.Builder().code(404).build()
+                if (request.url.queryParameter("format") == "full") {
+                    val data = java.util.Base64.getUrlEncoder().encodeToString(billBody.toByteArray())
+                    return ok("""{"id":"$id","payload":{"mimeType":"multipart/alternative","parts":[{"mimeType":"text/plain","body":{"data":"$data"}}]}}""")
+                }
                 val labels = if (m[3] == "true") "\"INBOX\",\"UNREAD\"" else "\"INBOX\""
                 val at = 1_764_000_000_000L + id.drop(1).toLong() * 60_000
                 return ok(
@@ -77,6 +84,7 @@ class GmailConnectorTest {
     private fun connector(tokens: GoogleTokenSource, linked: Boolean = true) = GmailConnector(
         FakeSecretStore(if (linked) mapOf(SecretKey.GOOGLE_LINKED to "1") else emptyMap()),
         tokens, GmailApi(OkHttpClient(), testJson, server.url("/").toString().trimEnd('/')), testJson,
+        excludedSenders = { listOf("hdfcbank") },
     )
 
     private fun result(call: ConnectorCall): InboxResult =
@@ -97,21 +105,35 @@ class GmailConnectorTest {
         assertFalse("bank sender filtered", subjects.any { "Statement" in it })
         assertFalse("OTP filtered", subjects.any { "OTP" in it })
         assertEquals(2, r.hidden)
-        // Newest first.
-        assertEquals("Lunch on Friday?", r.messages.first().subject)
+        // Most important first: the bill, then the person, then travel.
+        assertEquals(listOf("Your Airtel bill is ready", "Lunch on Friday?", "Your trip to Goa"), r.messages.map { it.subject })
 
         val list = requests.first { it.url.encodedPath == "/gmail/v1/users/me/messages" }
         assertTrue(list.url.queryParameter("q")!!.contains(EmailFilter.PROMOTIONS_QUERY))
-        // Every message read is metadata only (never a body or attachment).
-        requests.filter { it.url.encodedPath.count { ch -> ch == '/' } > 5 }.forEach {
+        // Message reads are metadata only, except the one bill whose amount wasn't in the preview.
+        val reads = requests.filter { it.url.encodedPath.count { ch -> ch == '/' } > 5 }
+        reads.filter { it.url.queryParameter("format") != "full" }.forEach {
             assertEquals("metadata", it.url.queryParameter("format"))
-            assertEquals(listOf("From", "Subject"), it.url.queryParameterValues("metadataHeaders"))
+            assertEquals(GmailApi.METADATA_HEADERS, it.url.queryParameterValues("metadataHeaders"))
         }
+        assertEquals(listOf("m5"), reads.filter { it.url.queryParameter("format") == "full" }.map { it.url.encodedPath.substringAfterLast('/') })
+    }
+
+    @Test fun billAmountAndDueDateComeFromTheTextWhichIsNotKept() = runBlocking {
+        val call = connector(FakeTokens(ArrayDeque(listOf("tok-1")))).callTool(GmailConnector.RECENT, JsonObject(emptyMap()))
+        val bill = result(call).messages.first { it.subject.contains("Airtel") }
+        assertEquals("BILL", bill.kind)
+        assertEquals("₹1,178.82", bill.amount)
+        assertEquals("05/12/2026", bill.due)
+        // Only the two values are kept: no other body text in the result (which is what gets cached).
+        val text = (call as ConnectorCall.Ok).text
+        assertFalse(text.contains("Dear customer"))
+        assertFalse(text.contains("5550001004"))
     }
 
     @Test fun unreadUsesUnreadQuery() = runBlocking {
         val r = result(connector(FakeTokens(ArrayDeque(listOf("tok-1")))).callTool(GmailConnector.UNREAD, JsonObject(emptyMap())))
-        assertEquals(4, r.estimate)
+        assertEquals(5, r.estimate)
         assertTrue(requests.first().url.queryParameter("q")!!.startsWith("in:inbox is:unread"))
     }
 

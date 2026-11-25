@@ -604,8 +604,16 @@ numbers, account, card and IFSC-style numbers, OTPs and codes, URLs with tokens,
 needs them. The first send shows the exact text and asks for approval. Tests cover the redactor with adversarial
 inputs and check that "Never" means no personal field in any request body.
 
-**Privacy filters.** Excluded Gmail labels and senders are dropped before caching. Banks, OTP and 2FA senders and
-the Promotions category are excluded by default. Excluded Drive folders. A "Private mode" switch blocks every
+**Email triage (user request, 2026-11-25).** Answers lead with what matters, decided on the phone with no LLM:
+Gmail's Important/Starred labels and tabs, the List-Unsubscribe/Precedence headers bulk mail carries, and sender
+and keyword rules sort each email into security, bill, government, person, job, bank, travel, order, routine
+update or noise (newsletters, social, promos). Noise is only counted. Bills get an amount and due date: from the
+preview, or, if missing, by reading that one email's text on the phone (at most 4 per request, `format=full`),
+keeping only the two values and never the text. Nothing about this reaches Claude.
+
+**Privacy filters.** Excluded Gmail labels and senders are dropped before caching. OTP and 2FA mails and the
+Promotions category are excluded by default. Banks were excluded by default until 2026-11-25; the user wants bank
+and card statements, so the default sender list is now empty. Excluded Drive folders. A "Private mode" switch blocks every
 connector, including the cache.
 
 **Unchanged.** Tiers (email, calendar and Drive need a recent unlock; finance needs PIN or fingerprint), spoken

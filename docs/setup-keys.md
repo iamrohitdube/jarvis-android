@@ -47,6 +47,15 @@ Google renames console menus from time to time. If a label below doesn't match, 
 
    **Update** → **Save**. Google marks both as *restricted*. That's expected (see 3.4).
 6. **Audience** → **Test users** → **Add users** → your own Gmail → **Save**.
+7. **Branding** (needed before **Publish app** in 3.4 is enabled). Leave **App logo** empty: a logo needs Google's
+   review. Fill in the links (the project's pages, served by GitHub Pages from the `gh-pages` branch):
+   - Application home page: `https://iamrohitdube.github.io/jarvis-android/`
+   - Application privacy policy link: `https://iamrohitdube.github.io/jarvis-android/privacy.html`
+   - Application terms of service link: `https://iamrohitdube.github.io/jarvis-android/terms.html`
+   - Authorized domains: `iamrohitdube.github.io`
+   - Developer contact information: your own Gmail. **Save**.
+
+   If you fork JARVIS, publish your own copies of these pages and use your own links.
 
 ### 3.3 Android client (no secret is created)
 1. Get the signing fingerprint of the APK you install. For the debug build made on this PC, in Git Bash:
@@ -55,7 +64,8 @@ Google renames console menus from time to time. If a label below doesn't match, 
    keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android
    ```
 
-   Copy the **SHA1** line. (`keytool` comes with Android Studio's JDK, in `jbr/bin`.) A release build later needs
+   Copy the **SHA1** line. (`keytool` comes with any JDK: Android Studio's `jbr/bin`, or the Microsoft JDK already
+   on PATH on the dev PC.) A release build later needs
    its own SHA-1, added as a second Android client.
 2. **Google Auth Platform** → **Clients** → **Create client**.
    - Application type: **Android**

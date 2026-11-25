@@ -34,7 +34,10 @@
   - Tests: connector against a mock Gmail (metadata only, filter, retry, reauth), templates, filter, and an
     end-to-end test proving no Google token, sender, subject or snippet reaches Anthropic.
   - Not done (later): excluded Gmail labels (only senders/promotions now), "Private mode" switch (step 6).
-  - **Device test needed:** Google Cloud setup, sign-in, "any new emails?", "emails from X", offline answer.
+  - Device (2026-11-25): sign-in and Gmail work on the phone. User feedback: answers listed every email.
+  - **Triage added (2026-11-25, D29 "Email triage"):** important emails first (security, bills with amount and due
+    date, government, people, jobs, bank, travel, orders); newsletters/social/promos only counted. Bank mail no
+    longer hidden by default (OTPs still are). **310 unit tests, 0 failures.** Needs a device check with the real inbox.
 - [ ] Step 4: Calendar (phone calendar via CalendarContract, user pick 2026-11-25), then Drive metadata
 - [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
   is the only brain; personal data still answered on the phone via `private_data` (D29 update).

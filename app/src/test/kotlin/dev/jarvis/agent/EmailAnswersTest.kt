@@ -22,13 +22,27 @@ class EmailAnswersTest {
 
     private fun raw(r: InboxResult) = testJson.encodeToString(InboxResult.serializer(), r)
 
-    @Test fun unreadCountAndLatest() {
-        val text = EmailAnswers.render("gmail_unread", raw(InboxResult(estimate = 2, messages = listOf(goa, lunch), hidden = 1)), null, now)
-        assertTrue(text, text.startsWith("You have 2 unread emails."))
-        assertTrue(text, text.contains("• Acme Travel: Your trip to Goa (9:05 AM)"))
-        assertTrue(text, text.contains("• Priya Sharma: Lunch on Friday? (yesterday)"))
+    private val bill = EmailHeader("HDFC Bank <s@hdfcbank.net>", "Credit card statement", at(25, 8), unread = true,
+        kind = "BILL", amount = "₹12,345", due = "05/12/2026")
+    private val digest = EmailHeader("news@digest.example", "Weekly digest", at(25, 7), unread = true, bulk = true, kind = "NOISE")
+    private val promo = EmailHeader("Shop <deals@shop.example>", "60% off", at(25, 6), unread = true, bulk = true, kind = "NOISE")
+
+    @Test fun unreadShowsWhatMattersAndCountsTheRest() {
+        val text = EmailAnswers.render("gmail_unread", raw(InboxResult(estimate = 9, messages = listOf(digest, goa, lunch, promo, bill), hidden = 1)), null, now)
+        assertTrue(text, text.startsWith("You have 9 unread emails. 3 need attention:\n"))
+        val lines = text.lines()
+        assertEquals("• Bill · HDFC Bank: Credit card statement, ₹12,345 due 05/12/2026 (8:05 AM)", lines[1])
+        assertEquals("• Priya Sharma: Lunch on Friday? (yesterday)", lines[2])
+        assertEquals("• Travel · Acme Travel: Your trip to Goa (9:05 AM)", lines[3])
+        assertTrue(text, text.contains("Also 2 newsletters or social posts skipped."))
+        assertFalse("newsletters not listed", text.contains("Weekly digest"))
         assertTrue(text, text.contains("1 hidden by your privacy filter."))
         assertFalse("no email addresses", text.contains("@"))
+    }
+
+    @Test fun onlyNoise() {
+        val text = EmailAnswers.render("gmail_recent", raw(InboxResult(messages = listOf(digest, promo))), null, now)
+        assertEquals("Nothing important in your latest emails, just 2 newsletters or social posts.", text)
     }
 
     @Test fun noUnread() {
@@ -63,8 +77,10 @@ class EmailAnswersTest {
         val otp = EmailHeader("Shop <a@shop.example>", "Your OTP is 4829", 0, true)
         val code = EmailHeader("x@y.example", "Hello", 0, true, snippet = "Your verification code is 1234")
         val bank = EmailHeader("HDFC Bank <alerts@hdfcbank.net>", "Statement", 0, true)
-        val kept = EmailFilter.apply(listOf(goa, otp, code, bank, lunch), EmailFilter.DEFAULT_EXCLUDED_SENDERS)
+        val kept = EmailFilter.apply(listOf(goa, otp, code, bank, lunch), listOf("hdfcbank"))
         assertEquals(listOf(goa, lunch), kept)
+        // Bank mail is shown by default now (the user wants statements); codes are still dropped.
+        assertEquals(listOf(bank), EmailFilter.apply(listOf(otp, bank), EmailFilter.DEFAULT_EXCLUDED_SENDERS))
         // "hotpot" must not count as an OTP.
         assertEquals(1, EmailFilter.apply(listOf(EmailHeader("a@b.example", "Hotpot night", 0, true)), emptyList()).size)
         // An empty exclusion list keeps the bank mail.
