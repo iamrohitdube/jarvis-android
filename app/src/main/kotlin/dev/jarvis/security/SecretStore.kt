@@ -23,6 +23,8 @@ enum class SecretKey(val id: String) {
      * 1-hour access tokens on request (D29), so the app stores no Google token at all.
      */
     GOOGLE_LINKED("google_linked"),
+    /** Same for Google Drive (authorised separately from Gmail). */
+    GOOGLE_DRIVE_LINKED("google_drive_linked"),
 }
 
 /** Encrypted key/value storage for secrets (CLAUDE.md: Storage interface, swappable). */

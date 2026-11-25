@@ -126,6 +126,7 @@ object PhoneAnswers {
     fun render(spec: ToolSpec, raw: String, question: String, item: String?, now: ZonedDateTime): String = when (spec.group) {
         ToolGroup.EMAIL -> EmailAnswers.render(spec.name, raw, item, now)
         ToolGroup.CALENDAR -> CalendarAnswers.render(spec.name, raw, now)
+        ToolGroup.FILES -> DriveAnswers.render(spec.name, raw, now)
         else -> FinanceAnswers.render(spec.name, raw, question, item)
     }
 }

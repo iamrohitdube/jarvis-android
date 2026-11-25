@@ -145,12 +145,19 @@ object AppModule {
         IndMoneyConnector(secrets, oauth, mcp, audit = audit)
 
     @Provides @Singleton
-    fun googleAuthorizer(@ApplicationContext c: Context) = GoogleAuthorizer(c)
+    fun googleAuth(@ApplicationContext c: Context) = dev.jarvis.connectors.google.GoogleAuth(
+        gmail = GoogleAuthorizer(c, listOf(GoogleAuthorizer.GMAIL_READONLY)),
+        drive = GoogleAuthorizer(c, listOf(GoogleAuthorizer.DRIVE_METADATA_READONLY)),
+    )
 
     @Provides @Singleton
-    fun gmail(secrets: SecretStore, google: GoogleAuthorizer, http: OkHttpClient, json: Json, settings: SettingsRepository, audit: AuditLog) =
+    fun drive(secrets: SecretStore, google: dev.jarvis.connectors.google.GoogleAuth, http: OkHttpClient, json: Json, audit: AuditLog) =
+        dev.jarvis.connectors.google.DriveConnector(secrets, google.drive, dev.jarvis.connectors.google.DriveApi(http, json), json, audit)
+
+    @Provides @Singleton
+    fun gmail(secrets: SecretStore, google: dev.jarvis.connectors.google.GoogleAuth, http: OkHttpClient, json: Json, settings: SettingsRepository, audit: AuditLog) =
         GmailConnector(
-            secrets, google, GmailApi(http, json), json,
+            secrets, google.gmail, GmailApi(http, json), json,
             excludedSenders = { EmailFilter.parseSenders(settings.settings.first().emailExcludedSenders) },
             audit = audit,
         )
@@ -163,9 +170,10 @@ object AppModule {
 
     @Provides @Singleton
     fun connectors(
-        indMoney: IndMoneyConnector, gmail: GmailConnector, calendar: dev.jarvis.connectors.phone.CalendarConnector,
+        indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
+        calendar: dev.jarvis.connectors.phone.CalendarConnector,
     ): Map<String, @JvmSuppressWildcards Connector> =
-        listOf<Connector>(indMoney, gmail, calendar).associateBy { it.id }
+        listOf<Connector>(indMoney, gmail, drive, calendar).associateBy { it.id }
 
     private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
         androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED

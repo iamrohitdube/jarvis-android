@@ -1,7 +1,7 @@
 package dev.jarvis.agent
 
 /** Tool groups from CLAUDE.md section 4. */
-enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, CALLS, MESSAGING, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
+enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, FILES, CALLS, MESSAGING, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
 
 enum class RiskLevel { READ, WRITE, ACTION }
 
@@ -43,6 +43,7 @@ object ToolRegistry {
     const val INDMONEY = "indmoney"
     const val GMAIL = "gmail"
     const val CALENDAR = "calendar"
+    const val DRIVE = "drive"
 
     /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
     val LOCAL_SOURCES = setOf(CALENDAR, "calls", "recordings", "sms", "notifications")
@@ -83,6 +84,9 @@ object ToolRegistry {
         local(CALENDAR, ToolGroup.CALENDAR, "calendar_upcoming", "Events in the next 7 days, next event first",
             listOf("next meeting", "my calendar", "my schedule", "upcoming", "this week", "tomorrow's meetings"), groupDefault = true, snapshot = true),
         local(CALENDAR, ToolGroup.CALENDAR, "calendar_search", "Events matching a title or place", listOf("when is my", "when's my"), itemArg = "query"),
+        // Google Drive (D29 step 4): file names and dates only. Tier 1.
+        local(DRIVE, ToolGroup.FILES, "drive_recent", "Recently edited Drive files", listOf("my drive", "recent files", "my files"), groupDefault = true, snapshot = true),
+        local(DRIVE, ToolGroup.FILES, "drive_search", "Drive files by name", listOf("find the file", "find file", "file called", "document called", "sheet called"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
@@ -95,6 +99,7 @@ object ToolRegistry {
         ),
         ToolGroup.EMAIL to listOf("gmail", "my email", "my emails", "my inbox", "my mail"),
         ToolGroup.CALENDAR to listOf("my calendar", "my schedule", "my meetings", "my agenda"),
+        ToolGroup.FILES to listOf("google drive", "my drive", "my files", "my documents"),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }

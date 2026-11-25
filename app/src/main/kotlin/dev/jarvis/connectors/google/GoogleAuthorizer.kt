@@ -25,6 +25,9 @@ interface GoogleTokenSource {
     suspend fun clearToken(token: String)
 }
 
+/** One authoriser per Google service (Gmail, Drive), for the Settings sign-in buttons. */
+class GoogleAuth(val gmail: GoogleAuthorizer, val drive: GoogleAuthorizer)
+
 /** What a sign-in attempt from the UI needs to do next. */
 sealed interface GoogleAuthorizeOutcome {
     data object Granted : GoogleAuthorizeOutcome
@@ -34,14 +37,15 @@ sealed interface GoogleAuthorizeOutcome {
 }
 
 /**
- * Google Identity Services Authorization API (play-services-auth). Requests only `gmail.readonly` (D29).
- * Each user creates their own Android OAuth client (package + SHA-1); see docs/setup-keys.md section 3.
+ * Google Identity Services Authorization API (play-services-auth), for one service's [scopes] (D29): Gmail and Drive
+ * are authorised separately, so adding Drive never breaks a working Gmail. Each user creates their own Android
+ * OAuth client (package + SHA-1); see docs/setup-keys.md section 3.
  */
-class GoogleAuthorizer(private val context: Context) : GoogleTokenSource {
+class GoogleAuthorizer(private val context: Context, private val scopes: List<String>) : GoogleTokenSource {
     private val client get() = Identity.getAuthorizationClient(context)
 
     private fun request(): AuthorizationRequest =
-        AuthorizationRequest.builder().setRequestedScopes(SCOPES.map { Scope(it) }).build()
+        AuthorizationRequest.builder().setRequestedScopes(scopes.map { Scope(it) }).build()
 
     override suspend fun accessToken(): String? {
         val result = client.authorize(request()).await()
@@ -73,7 +77,7 @@ class GoogleAuthorizer(private val context: Context) : GoogleTokenSource {
 
     companion object {
         const val GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
-        val SCOPES = listOf(GMAIL_READONLY)
+        const val DRIVE_METADATA_READONLY = "https://www.googleapis.com/auth/drive.metadata.readonly"
     }
 }
 

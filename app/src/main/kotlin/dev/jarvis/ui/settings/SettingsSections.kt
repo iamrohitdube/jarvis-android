@@ -203,6 +203,46 @@ fun GmailSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
     }
 }
 
+/** Google Drive (D29): file names and dates only, authorised separately from Gmail. */
+@Composable
+fun DriveSection(vm: SettingsViewModel) {
+    val status by vm.driveStatus.collectAsStateWithLifecycle()
+    val message by vm.driveMessage.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val consent = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> vm.completeGoogleSignIn(result.data, kind = SettingsViewModel.GoogleKind.DRIVE) }
+    SettingsCard(
+        "Google Drive", AppIcons.Storage,
+        subtitle = "Find a file by name, recent files (names and dates only)",
+        tint = MaterialTheme.colorScheme.secondary,
+        trailing = {
+            when (status) {
+                ConnectorStatus.Connected -> StatusChip("Connected", ChipTone.GOOD)
+                ConnectorStatus.NotConnected -> StatusChip("Not connected")
+                ConnectorStatus.NeedsReauth -> StatusChip("Expired", ChipTone.WARN)
+            }
+        },
+    ) {
+        Hint("Uses the same Google Cloud project as Gmail, with the Drive API and the drive.metadata.readonly scope added (docs/setup-keys.md section 3). File contents are never read.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    vm.startGoogleSignIn({ pi ->
+                        consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())
+                    }, kind = SettingsViewModel.GoogleKind.DRIVE)
+                },
+                enabled = !busy,
+            ) { Text(if (status == ConnectorStatus.NotConnected) "Sign in" else "Sign in again") }
+            if (status != ConnectorStatus.NotConnected) {
+                OutlinedButton(onClick = vm::testDrive, enabled = !busy) { Text("Test") }
+                TextButton(onClick = vm::signOutDrive, enabled = !busy) { Text("Sign out") }
+            }
+        }
+        StatusMessage(message, error = message?.let { "Couldn't" in it || "failed" in it.lowercase() } == true)
+    }
+}
+
 /** Phone data (D29/D30): each source is read on the phone with an Android permission; nothing leaves the phone. */
 @Composable
 fun PhoneDataSection(vm: SettingsViewModel) {

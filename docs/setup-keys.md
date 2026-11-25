@@ -88,9 +88,11 @@ in again every week. For a personal app, switch to production without verificati
    the 7-day grant is replaced.
 
 ### 3.5 On the phone
-Settings → Google → **Sign in** → pick your account → approve. JARVIS then runs a free test call (it counts unread
-emails, with no Claude call). To disconnect fully: JARVIS → Settings → Google → **Sign out**, and optionally
-https://myaccount.google.com/connections → JARVIS → **Delete all connections**.
+Settings → **Gmail** → **Sign in** → pick your account → approve. JARVIS then runs a free test call (it reads the
+latest inbox headers, with no Claude call). **Google Drive** has its own **Sign in** button: Gmail and Drive are
+approved separately, so adding Drive later never interrupts Gmail. For Drive, make sure the **Google Drive API** is
+enabled (3.1) and the `drive.metadata.readonly` scope is added (3.2). To disconnect fully: **Sign out** on each card,
+and optionally https://myaccount.google.com/connections → JARVIS → **Delete all connections**.
 
 ## Coming later
 - QR import from a PC page (planned, not built yet).

@@ -44,7 +44,7 @@ class GmailConnector(
     /** The user's excluded senders (Settings); banks by default. */
     private val excludedSenders: suspend () -> List<String> = { EmailFilter.DEFAULT_EXCLUDED_SENDERS },
     private val audit: AuditSink = AuditSink.NONE,
-) : Connector {
+) : GoogleService {
     override val id = ToolRegistry.GMAIL
     override val displayName = "Gmail"
 
@@ -58,8 +58,7 @@ class GmailConnector(
         }
     }
 
-    /** Called after the user approved access in Google's consent screen. */
-    suspend fun markLinked() {
+    override suspend fun markLinked() {
         secrets.put(SecretKey.GOOGLE_LINKED, "1")
         needsReauth.value = false
         audit.record(AuditEvent(AuditCategory.CONNECTOR, "sign_in", "ok", detail = id))

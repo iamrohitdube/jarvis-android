@@ -41,7 +41,8 @@ class SettingsViewModel @Inject constructor(
     private val indMoney: IndMoneyConnector,
     private val connectors: Map<String, @JvmSuppressWildcards dev.jarvis.connectors.Connector>,
     private val gmail: dev.jarvis.connectors.google.GmailConnector,
-    private val google: dev.jarvis.connectors.google.GoogleAuthorizer,
+    private val drive: dev.jarvis.connectors.google.DriveConnector,
+    private val google: dev.jarvis.connectors.google.GoogleAuth,
     private val signInEvents: SignInEvents,
     private val snapshots: SnapshotStore,
     private val history: HistoryStore,
@@ -352,6 +353,15 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
     /** Result line for the Gmail card. */
     val gmailMessage = MutableStateFlow<String?>(null)
+    val driveStatus: StateFlow<ConnectorStatus> = drive.status
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
+    val driveMessage = MutableStateFlow<String?>(null)
+
+    enum class GoogleKind { GMAIL, DRIVE }
+    private fun serviceOf(k: GoogleKind): dev.jarvis.connectors.google.GoogleService = if (k == GoogleKind.GMAIL) gmail else drive
+    private fun authorizerOf(k: GoogleKind) = if (k == GoogleKind.GMAIL) google.gmail else google.drive
+    private fun messageOf(k: GoogleKind) = if (k == GoogleKind.GMAIL) gmailMessage else driveMessage
+    private fun nameOf(k: GoogleKind) = if (k == GoogleKind.GMAIL) "Gmail" else "Drive"
 
     /** Result line for the key test ("Key works." / error). */
     val keyMessage = MutableStateFlow<String?>(null)
@@ -414,35 +424,41 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** Google sign-in: Play services either grants at once or returns a consent screen for the UI to launch. */
-    fun startGoogleSignIn(launchConsent: (android.app.PendingIntent) -> Unit, onOk: () -> Unit = {}) = launchBusy {
-        gmailMessage.value = "Asking Google…"
-        when (val r = google.authorize()) {
-            dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Granted -> { gmail.markLinked(); testGmailNow(onOk) }
-            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.NeedsUser -> { gmailMessage.value = null; launchConsent(r.pendingIntent) }
+    fun startGoogleSignIn(launchConsent: (android.app.PendingIntent) -> Unit, onOk: () -> Unit = {}, kind: GoogleKind = GoogleKind.GMAIL) = launchBusy {
+        val message = messageOf(kind)
+        message.value = "Asking Google…"
+        when (val r = authorizerOf(kind).authorize()) {
+            dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Granted -> { serviceOf(kind).markLinked(); testGoogleNow(kind, onOk) }
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.NeedsUser -> { message.value = null; launchConsent(r.pendingIntent) }
             is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Failed ->
-                gmailMessage.value = "Couldn't start Google sign-in: ${r.message}. Check the Android client in Google Cloud (docs/setup-keys.md 3.3)."
+                message.value = "Couldn't start Google sign-in: ${r.message}. Check the Android client in Google Cloud (docs/setup-keys.md 3.3)."
         }
     }
 
     /** The consent screen's result. */
-    fun completeGoogleSignIn(data: android.content.Intent?, onOk: () -> Unit = {}) = launchBusy {
-        if (google.completeFromIntent(data)) { gmail.markLinked(); testGmailNow(onOk) }
-        else gmailMessage.value = "Google sign-in was cancelled or failed."
+    fun completeGoogleSignIn(data: android.content.Intent?, onOk: () -> Unit = {}, kind: GoogleKind = GoogleKind.GMAIL) = launchBusy {
+        if (authorizerOf(kind).completeFromIntent(data)) { serviceOf(kind).markLinked(); testGoogleNow(kind, onOk) }
+        else messageOf(kind).value = "Google sign-in was cancelled or failed."
     }
 
-    fun testGmail(onOk: () -> Unit = {}) = launchBusy { testGmailNow(onOk) }
+    fun testGmail(onOk: () -> Unit = {}) = launchBusy { testGoogleNow(GoogleKind.GMAIL, onOk) }
+    fun testDrive() = launchBusy { testGoogleNow(GoogleKind.DRIVE) {} }
 
-    private suspend fun testGmailNow(onOk: () -> Unit) {
-        gmailMessage.value = "Testing Gmail…"
-        when (val r = gmail.test()) {
-            ConnectorTestResult.Ok -> { gmailMessage.value = "Gmail works."; onOk() }
-            is ConnectorTestResult.Failed -> gmailMessage.value = "Couldn't read Gmail: ${r.message}"
+    private suspend fun testGoogleNow(kind: GoogleKind, onOk: () -> Unit) {
+        val message = messageOf(kind)
+        message.value = "Testing ${nameOf(kind)}…"
+        when (val r = serviceOf(kind).test()) {
+            ConnectorTestResult.Ok -> { message.value = "${nameOf(kind)} works."; onOk() }
+            is ConnectorTestResult.Failed -> message.value = "Couldn't read ${nameOf(kind)}: ${r.message}"
         }
     }
 
-    fun signOutGmail() = launchBusy {
-        gmail.signOut()
-        gmailMessage.value = "Gmail disconnected on this phone. To remove access fully: myaccount.google.com/connections."
+    fun signOutGmail() = signOutGoogle(GoogleKind.GMAIL)
+    fun signOutDrive() = signOutGoogle(GoogleKind.DRIVE)
+
+    private fun signOutGoogle(kind: GoogleKind) = launchBusy {
+        serviceOf(kind).signOut()
+        messageOf(kind).value = "${nameOf(kind)} disconnected on this phone. To remove access fully: myaccount.google.com/connections."
     }
 
     fun setEmailExcludedSenders(v: String) = viewModelScope.launch { repo.setEmailExcludedSenders(v) }
