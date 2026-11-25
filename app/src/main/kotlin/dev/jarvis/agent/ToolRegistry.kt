@@ -28,7 +28,10 @@ data class ToolSpec(
      * snapshot and reused for a short time. Live market data is never a snapshot tool.
      */
     val snapshot: Boolean = false,
-)
+) {
+    /** The user's own connector data (above Tier 0): answered on the phone, never sent to Claude (D29). */
+    val isPersonal: Boolean get() = connectorId != null && tier != AuthTier.OPEN
+}
 
 /** The skill/tool catalog. The agent only ever sees the tools the router selects. */
 object ToolRegistry {
@@ -36,7 +39,12 @@ object ToolRegistry {
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
-            AuthTier.SENSITIVE, listOf("net worth", "networth", "portfolio", "wealth", "assets", "liabilit", "how much money", "how am i doing"),
+            AuthTier.SENSITIVE, listOf(
+                "net worth", "networth", "portfolio", "wealth", "assets", "liabilit", "how much money do i have", "how much money i have", "how am i doing",
+                // Unambiguous bank phrases only; anything vaguer goes to Claude, which can hand it back (PrivateDataTool).
+                "bank balance", "savings account", "savings balance", "account balance", "my balance", "cash balance",
+                "fixed deposit", "my fd", "money in my bank", "money in the bank",
+            ),
             groupDefault = true, snapshot = true),
         indmoney("networth_allocation_breakdown", "Allocation detail for one asset type",
             AuthTier.SENSITIVE, listOf("allocation", "breakdown", "split", "asset class", "exposure")),
@@ -58,7 +66,12 @@ object ToolRegistry {
 
     /** Phrases that select a group even when no single tool matched. */
     val groupKeywords: Map<ToolGroup, List<String>> = mapOf(
-        ToolGroup.FINANCE to listOf("indmoney", "invest", "finance", "money", "fund", "stock", "market", "sip", "portfolio", "net worth", "networth"),
+        // Only clearly personal phrases pick the group default (net worth). General finance questions ("what is a
+        // mutual fund?") go to Claude, which can hand personal ones back to the phone (PrivateDataTool).
+        ToolGroup.FINANCE to listOf(
+            "indmoney", "my money", "my investments", "my investment", "my finances", "my portfolio", "sip",
+            "portfolio", "net worth", "networth",
+        ),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }

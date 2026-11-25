@@ -4,7 +4,6 @@ import dev.jarvis.claude.AssembledMessage
 import dev.jarvis.claude.LlmClient
 import dev.jarvis.claude.LlmEvent
 import dev.jarvis.claude.LlmException
-import dev.jarvis.claude.McpServerConfig
 import dev.jarvis.claude.Pricing
 import dev.jarvis.claude.StreamErrorEvent
 import dev.jarvis.claude.StreamProtocolException
@@ -15,12 +14,14 @@ import dev.jarvis.claude.UsageMeter
 import dev.jarvis.claude.UsageSummary
 import dev.jarvis.claude.str
 import dev.jarvis.connectors.Connector
+import dev.jarvis.connectors.ConnectorCall
+import dev.jarvis.connectors.ConnectorStatus
+import dev.jarvis.connectors.McpToolDef
 import dev.jarvis.data.AppSettings
 import dev.jarvis.data.AuditCategory
 import dev.jarvis.data.AuditEvent
 import dev.jarvis.data.AuditSink
 import dev.jarvis.data.SnapshotStore
-import dev.jarvis.data.db.SnapshotEntity
 import dev.jarvis.security.AccessController
 import dev.jarvis.security.AccessResult
 import dev.jarvis.security.AuthMethodParser
@@ -32,7 +33,10 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.time.Instant
 import java.time.ZoneId
 
@@ -68,14 +72,17 @@ sealed interface AgentEvent {
         val sensitive: Boolean = false,
         /** Authorised by fingerprint/device credential: show, don't speak. */
         val screenOnly: Boolean = false,
+        /** Answered on the phone from connector data (D29): never resent to Claude as history. */
+        val personal: Boolean = false,
     ) : AgentEvent
     data class Failed(val error: AgentError, val partialText: String) : AgentEvent
 }
 
 /**
- * Runs one user turn: budget check -> route -> reuse fresh snapshots or attach connectors -> stream
- * -> resume pause_turn -> save snapshots -> log usage and audit. Policy decisions (which tools, which
- * model, whether cached data is reused) are made in code, never delegated to the prompt.
+ * Runs one user turn: local answers -> budget check -> route -> security gate -> then EITHER answer personal
+ * connector questions on the phone (D29: no Claude call, nothing personal leaves the phone) OR stream from
+ * Claude, running any public tools it asks for on the phone. Policy decisions (which tools, which model,
+ * whether saved data is reused) are made in code, never delegated to the prompt.
  */
 class AgentLoop(
     private val llm: LlmClient,
@@ -91,6 +98,8 @@ class AgentLoop(
     private val requestContext: (() -> String)? = null,
     /** Phone facts for on-device answers (battery); null disables battery answers. */
     private val phoneInfo: (() -> PhoneInfo)? = null,
+    /** Debug-build log for result SHAPES only (field names and types, never values). */
+    private val debugLog: ((String) -> Unit)? = null,
 ) {
     fun run(history: List<ChatTurn>, userText: String, settings: AppSettings): Flow<AgentEvent> = flow {
         // Simple questions the phone can answer itself: no request to Claude (instant, free).
@@ -100,115 +109,97 @@ class AgentLoop(
             emit(AgentEvent.Finished(local, Usage(), costUsd = 0.0, truncated = false, model = LOCAL_MODEL))
             return@flow
         }
-        // Hard stop before spending anything once the local monthly estimate reaches the budget.
+        // "net worth, fingerprint": the method word picks the auth path and is not sent anywhere.
+        val (question, preferredMethod) = AuthMethodParser.extract(userText)
+        val keywordRoute = ToolRouter.route(question, settings)
+        // The phrase list is only a BACKUP (offline, budget used up): Claude categorises every question (D29).
+        val fallbackPersonal = keywordRoute.tools.filter { it.isPersonal }
+        // The keyword route still picks the mode and model; tools are Claude's choice.
+        val route = keywordRoute.copy(tools = emptyList(), groups = emptySet())
+
+        // Hard stop before spending anything once the local monthly estimate reaches the budget. A question that
+        // clearly asks for the user's own money is still answered on the phone (free) from the backup phrase list.
         if (settings.stopAtBudget && settings.monthlyBudgetUsd > 0) {
             val summary = UsageSummary.of(usageMeter.entries.first(), settings.monthlyBudgetUsd, Instant.ofEpochMilli(clock()), zone)
             if (summary.budgetFraction >= 1.0) {
+                if (fallbackPersonal.isNotEmpty()) {
+                    personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question))
+                    return@flow
+                }
                 auditRequest("budget_stop", null, null)
                 emit(AgentEvent.Failed(AgentError.BudgetReached(settings.monthlyBudgetUsd), ""))
                 return@flow
             }
         }
-        // "net worth, fingerprint": the method word picks the auth path and is not sent to the model.
-        val (question, preferredMethod) = AuthMethodParser.extract(userText)
-        var route = ToolRouter.route(question, settings)
 
-        // Security gate: policy + auth before any tool or saved tool data is used (CLAUDE.md section 6).
-        var sensitive = false
-        var screenOnly = false
-        var byPin = false
-        val gated = route.tools.isNotEmpty()
-        if (gated) {
-            when (val decision = access.authorize(route.tools, preferredMethod)) {
-                is AccessResult.Granted -> {
-                    route = route.copy(tools = decision.tools, groups = decision.tools.map { it.group }.toSet())
-                    sensitive = decision.sensitive
-                    screenOnly = decision.screenOnly
-                    byPin = decision.method == dev.jarvis.security.AuthMethod.PIN
-                }
-                is AccessResult.Denied -> {
-                    auditRequest("denied:" + decision.reason.name.lowercase(), route, null)
-                    emit(AgentEvent.Failed(AgentError.AccessDenied(decision.reason, decision.toolNames), ""))
-                    return@flow
-                }
-            }
+        // What Claude may use: public market tools (the phone runs them) and the private_data hand-back.
+        val toolDefs = mutableListOf<McpToolDef>()
+        connectors[ToolRegistry.INDMONEY]?.let { indmoney ->
+            if (indmoney.status.first() != ConnectorStatus.NotConnected) toolDefs += indmoney.toolDefinitions(PUBLIC_TOOLS)
+            toolDefs += PrivateDataTool.definition
         }
+        val runnable = toolDefs.map { it.name }.filter { it != PrivateDataTool.NAME }.toSet()
+        emit(AgentEvent.Routed(route.model, emptyList()))
 
-        // Reuse fresh snapshots instead of calling the connector (saves the MCP round-trip tokens).
-        var cached: List<SnapshotEntity> = emptyList()
-        if (snapshots != null && route.tools.isNotEmpty() && !ToolRouter.wantsFresh(question)) {
-            snapshots.freshFor(route.tools, settings.snapshotMaxAgeMinutes * 60_000L)?.let { fresh ->
-                cached = fresh
-                route = route.copy(groups = emptySet(), tools = emptyList())
-            }
-        }
-        emit(AgentEvent.Routed(route.model, route.tools.map { it.name }, fromCache = cached.isNotEmpty()))
-        if (gated) emit(AgentEvent.Authorized(screenOnly, sensitive, byPin))
-
-        val servers = mutableListOf<McpServerConfig>()
-        for (cid in route.connectorIds) {
-            val connector = connectors[cid] ?: continue
-            val server = connector.mcpServer()
-            if (server == null) {
-                auditRequest("connector_signin_needed", route, cid)
-                emit(AgentEvent.Failed(AgentError.ConnectorSignIn(cid, connector.displayName), ""))
-                return@flow
-            }
-            servers += server
-        }
-
-        val now = clock()
-        val cachedData = cached.map { CachedData(displayName(it.connectorId), it.tool, ageLabel(now - it.fetchedAt), it.content) }
         val trimmedHistory = trimHistory(history)
         val text = StringBuilder()
-        val allContent = mutableListOf<JsonObject>()
+        val continuation = mutableListOf<JsonObject>()
+        val stamps = LinkedHashMap<String, DataStamp>()
         var usage = Usage()
         var model = route.model
         var ttft: Long? = null
         var tools = 0
-        var paused: List<JsonObject>? = null
         var continuations = 0
-        var authRetried = false
+        var toolRounds = 0
         var outcome = "cancelled"
+        var handoff: JsonObject? = null
+        var offline = false
         val started = clock()
 
         try {
             while (true) {
                 val request = PromptBuilder.build(
-                    route, trimmedHistory, question, servers, settings.serverFallback, paused, cachedData,
+                    route, trimmedHistory, question, toolDefs, settings.serverFallback, continuation,
                     context = requestContext?.invoke(),
                 )
                 var message: AssembledMessage? = null
-                try {
-                    llm.stream(request).collect { ev ->
-                        when (ev) {
-                            is LlmEvent.Update -> when (val u = ev.update) {
-                                is StreamUpdate.TextDelta -> { text.append(u.text); emit(AgentEvent.TextDelta(u.text)) }
-                                is StreamUpdate.ToolStarted -> { tools++; emit(AgentEvent.ToolActivity(u.name)) }
-                                is StreamUpdate.ToolFinished -> Unit
-                            }
-                            is LlmEvent.Completed -> { message = ev.message; if (ttft == null) ttft = ev.timeToFirstTokenMs }
+                llm.stream(request).collect { ev ->
+                    when (ev) {
+                        is LlmEvent.Update -> when (val u = ev.update) {
+                            is StreamUpdate.TextDelta -> { text.append(u.text); emit(AgentEvent.TextDelta(u.text)) }
+                            is StreamUpdate.ToolStarted -> { tools++; emit(AgentEvent.ToolActivity(u.name)) }
+                            is StreamUpdate.ToolFinished -> Unit
                         }
+                        is LlmEvent.Completed -> { message = ev.message; if (ttft == null) ttft = ev.timeToFirstTokenMs }
                     }
-                } catch (e: LlmException.InvalidRequest) {
-                    if (!authRetried && servers.isNotEmpty() && looksLikeMcpAuthError(e.apiMessage)) {
-                        authRetried = true
-                        if (refreshServers(route, servers)) continue
-                        val c = route.connectorIds.firstNotNullOfOrNull { connectors[it] }
-                        outcome = "connector_signin_needed"
-                        emitFailure(AgentError.ConnectorSignIn(c?.id ?: "", c?.displayName ?: "Connector"), text)
-                        return@flow
-                    }
-                    throw e
                 }
 
                 val msg = message ?: throw StreamProtocolException("No message received")
                 usage += msg.usage
                 msg.model?.let { model = it }
-                allContent += msg.content
+                val handoffUse = msg.content.firstOrNull { it.str("type") == "tool_use" && it.str("name") == PrivateDataTool.NAME }
+                if (msg.stopReason == "tool_use" && handoffUse != null) {
+                    handoff = handoffUse
+                    outcome = "handoff"
+                    break
+                }
+                if (msg.stopReason == "tool_use" && toolRounds < MAX_TOOL_ROUNDS) {
+                    toolRounds++
+                    continuation += assistantMessage(msg.content)
+                    val results = msg.content.filter { it.str("type") == "tool_use" }.map { use ->
+                        tools++
+                        emit(AgentEvent.ToolActivity(use.str("name") ?: "tool"))
+                        runPublicTool(use, runnable, stamps)
+                    }
+                    continuation += buildJsonObject {
+                        put("role", "user")
+                        put("content", JsonArray(results))
+                    }
+                    continue
+                }
                 if (msg.stopReason == "pause_turn" && continuations < MAX_CONTINUATIONS) {
                     continuations++
-                    paused = paused.orEmpty() + msg.content
+                    continuation += assistantMessage(msg.content)
                     continue
                 }
                 when (msg.stopReason) {
@@ -217,13 +208,7 @@ class AgentLoop(
                         emitFailure(AgentError.Refused(msg.stopDetails?.str("category")), text)
                     }
                     else -> {
-                        val stamps = recordToolCalls(ToolCalls.extract(allContent)) + cached.map {
-                            DataStamp(displayName(it.connectorId), it.tool, it.fetchedAt, cached = true)
-                        }
-                        cached.forEach {
-                            audit.record(AuditEvent(AuditCategory.TOOL, "cache_hit", "ok", tool = it.tool, tier = tierOf(it.tool), detail = "cached"))
-                        }
-                        val truncated = msg.stopReason == "max_tokens"
+                        val truncated = msg.stopReason == "max_tokens" || msg.stopReason == "tool_use"
                         outcome = if (truncated) "truncated" else "ok"
                         emit(
                             AgentEvent.Finished(
@@ -232,9 +217,7 @@ class AgentLoop(
                                 costUsd = Pricing.cost(model, usage),
                                 truncated = truncated,
                                 model = model,
-                                dataStamps = stamps,
-                                sensitive = sensitive,
-                                screenOnly = screenOnly,
+                                dataStamps = stamps.values.toList(),
                             )
                         )
                     }
@@ -245,7 +228,9 @@ class AgentLoop(
             throw e
         } catch (e: LlmException) {
             outcome = "error:" + e.javaClass.simpleName
-            emitFailure(mapError(e), text)
+            // Offline: a question the backup phrase list recognises as personal is still answered on the phone.
+            if (e is LlmException.Network && fallbackPersonal.isNotEmpty() && text.isEmpty()) offline = true
+            else emitFailure(mapError(e), text)
         } catch (e: StreamErrorEvent) {
             outcome = "error:" + e.errorType
             emitFailure(if (e.errorType == "overloaded_error") AgentError.Overloaded else AgentError.Other(e.message ?: e.errorType), text)
@@ -268,28 +253,178 @@ class AgentLoop(
                 auditRequest(outcome, route, null, model)
             }
         }
+
+        if (offline) {
+            personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question))
+            return@flow
+        }
+        // Claude judged this needs the user's own data: the phone takes over, behind the security gate.
+        val use = handoff ?: return@flow
+        val input = use["input"] as? JsonObject
+        val kinds = PrivateDataTool.kindsOf(input)
+        personalOnPhone(
+            PrivateDataTool.toolsFor(kinds), PrivateDataTool.itemOf(input), question, preferredMethod, settings,
+            bankFocus = kinds == setOf(PrivateDataTool.Kind.BANK_BALANCE) || (kinds.contains(PrivateDataTool.Kind.BANK_BALANCE) && FinanceAnswers.isBankQuestion(question)),
+        )
     }
 
-    /** Audits each tool call, saves whole-account results as snapshots, and returns live data stamps. */
-    private suspend fun recordToolCalls(calls: List<ToolCall>): List<DataStamp> {
-        val stamps = LinkedHashMap<String, DataStamp>()
-        val now = clock()
-        for (call in calls) {
-            val spec = ToolRegistry.byName(call.name)
-            audit.record(
-                AuditEvent(
-                    AuditCategory.TOOL, "call", if (call.isError) "error" else "ok",
-                    tool = call.name, tier = spec?.tier?.name, detail = "live",
+    /** Security gate (tier + policy), then the on-phone answer. Used for hand-backs and the offline backup. */
+    private suspend fun FlowCollector<AgentEvent>.personalOnPhone(
+        specs: List<ToolSpec>, item: String?, question: String, preferred: dev.jarvis.security.AuthMethod?,
+        settings: AppSettings, bankFocus: Boolean,
+    ) {
+        when (val decision = access.authorize(specs, preferred)) {
+            is AccessResult.Granted -> {
+                val granted = decision.tools.filter { it.isPersonal }
+                if (granted.isEmpty()) {
+                    auditRequest("denied:policy", null, null, LOCAL_MODEL)
+                    emit(AgentEvent.Failed(AgentError.AccessDenied(DenyReason.POLICY, specs.map { it.name }), ""))
+                    return
+                }
+                answerOnPhone(
+                    granted, question, settings,
+                    Flags(decision.sensitive, decision.screenOnly, decision.method == dev.jarvis.security.AuthMethod.PIN),
+                    bankFocus = bankFocus, item = item,
                 )
-            )
-            if (call.isError || spec == null || spec.helper) continue
-            val connectorId = spec.connectorId ?: continue
-            if (spec.snapshot && call.hasNoArguments && !call.resultText.isNullOrBlank()) {
-                snapshots?.save(connectorId, call.name, call.resultText, now)
             }
-            stamps[call.name] = DataStamp(displayName(connectorId), call.name, now, cached = false)
+            is AccessResult.Denied -> {
+                auditRequest("denied:" + decision.reason.name.lowercase(), null, null, LOCAL_MODEL)
+                emit(AgentEvent.Failed(AgentError.AccessDenied(decision.reason, decision.toolNames), ""))
+            }
         }
-        return stamps.values.toList()
+    }
+
+    private class Flags(val sensitive: Boolean, val screenOnly: Boolean, val byPin: Boolean)
+
+    /**
+     * Personal connector questions, answered with no Claude call: each whole-account read comes from a fresh
+     * snapshot or a live call made by the phone, and is rendered by [FinanceAnswers]. If the service can't be
+     * reached, the last saved result is used, labelled with its age.
+     */
+    private suspend fun FlowCollector<AgentEvent>.answerOnPhone(
+        personal: List<ToolSpec>, question: String, settings: AppSettings, flags: Flags, bankFocus: Boolean = false,
+        /** A specific fund or stock the user asked about (from Claude's hand-back), to filter holdings. */
+        item: String? = null,
+    ) {
+        val renderAs = if (bankFocus) "bank balance" else question
+        // Only whole-account reads run on the phone; anything narrower is answered from the overall snapshot.
+        val reads = personal.filter { it.snapshot }.ifEmpty {
+            listOfNotNull(ToolRegistry.byName(NET_WORTH_TOOL)?.takeIf { s -> s.connectorId == personal.first().connectorId })
+        }
+        val fresh = if (snapshots != null && !ToolRouter.wantsFresh(question)) {
+            snapshots.freshFor(reads, settings.snapshotMaxAgeMinutes * 60_000L)?.associateBy { it.tool }
+        } else null
+        emit(AgentEvent.Routed(LOCAL_MODEL, reads.map { it.name }, fromCache = fresh != null))
+        emit(AgentEvent.Authorized(flags.screenOnly, flags.sensitive, flags.byPin))
+
+        val parts = mutableListOf<String>()
+        val stamps = mutableListOf<DataStamp>()
+        var outcome = "ok"
+        for (spec in reads) {
+            val cid = spec.connectorId ?: continue
+            val connector = connectors[cid]
+            val source = connector?.displayName ?: cid
+            val saved = fresh?.get(spec.name)
+            if (saved != null) {
+                audit.record(AuditEvent(AuditCategory.TOOL, "cache_hit", "ok", tool = spec.name, tier = spec.tier.name, detail = "cached"))
+                parts += FinanceAnswers.render(spec.name, saved.content, renderAs, item)
+                stamps += DataStamp(source, spec.name, saved.fetchedAt, cached = true)
+                continue
+            }
+            if (connector == null) continue
+            emit(AgentEvent.ToolActivity(spec.name))
+            when (val r = connector.callTool(spec.name, EMPTY_ARGS)) {
+                is ConnectorCall.Ok -> {
+                    audit.record(AuditEvent(AuditCategory.TOOL, "call", if (r.toolError) "error" else "ok", tool = spec.name, tier = spec.tier.name, detail = PHONE))
+                    debugLog?.invoke("${spec.name} shape: " + JsonShape.describe(r.text))
+                    if (r.toolError) {
+                        parts += "$source couldn't get that right now."
+                        outcome = "tool_error"
+                        continue
+                    }
+                    val now = clock()
+                    snapshots?.save(cid, spec.name, r.text, now)
+                    parts += FinanceAnswers.render(spec.name, r.text, renderAs, item)
+                    stamps += DataStamp(source, spec.name, now, cached = false)
+                }
+                ConnectorCall.NeedsSignIn -> {
+                    audit.record(AuditEvent(AuditCategory.TOOL, "call", "signin_needed", tool = spec.name, tier = spec.tier.name, detail = PHONE))
+                    auditRequest("connector_signin_needed", null, cid, LOCAL_MODEL)
+                    emit(AgentEvent.Failed(AgentError.ConnectorSignIn(cid, source), ""))
+                    return
+                }
+                is ConnectorCall.Failed -> {
+                    audit.record(AuditEvent(AuditCategory.TOOL, "call", "error", tool = spec.name, tier = spec.tier.name, detail = PHONE))
+                    val old = snapshots?.latest(cid, spec.name)
+                    if (old == null) {
+                        auditRequest("error:connector", null, cid, LOCAL_MODEL)
+                        emit(AgentEvent.Failed(AgentError.Network(r.message), parts.joinToString("\n\n")))
+                        return
+                    }
+                    parts += "Couldn't reach $source, so this is from ${ageLabel(clock() - old.fetchedAt)}.\n" +
+                        FinanceAnswers.render(spec.name, old.content, renderAs, item)
+                    stamps += DataStamp(source, spec.name, old.fetchedAt, cached = true)
+                    outcome = "offline_saved"
+                }
+            }
+        }
+        val reply = parts.joinToString("\n\n").ifBlank { "Nothing to show." }
+        emit(AgentEvent.TextDelta(reply))
+        emit(
+            AgentEvent.Finished(
+                reply, Usage(), costUsd = 0.0, truncated = false, model = LOCAL_MODEL, dataStamps = stamps,
+                sensitive = flags.sensitive, screenOnly = flags.screenOnly, personal = true,
+            )
+        )
+        auditRequest(outcome, null, null, LOCAL_MODEL)
+    }
+
+    /**
+     * Runs one tool Claude asked for, ON THE PHONE. Only the routed public tools can run: anything else
+     * (including every personal tool) is refused here, whatever the model asks for.
+     */
+    private suspend fun runPublicTool(use: JsonObject, runnable: Set<String>, stamps: MutableMap<String, DataStamp>): JsonObject {
+        val id = use.str("id").orEmpty()
+        val name = use.str("name").orEmpty()
+        val spec = ToolRegistry.byName(name)
+        fun result(text: String, isError: Boolean) = buildJsonObject {
+            put("type", "tool_result")
+            put("tool_use_id", id)
+            put("content", text.take(MAX_TOOL_RESULT_CHARS))
+            if (isError) put("is_error", true)
+        }
+        if (spec == null || spec.isPersonal || name !in runnable) {
+            audit.record(AuditEvent(AuditCategory.TOOL, "call", "blocked", tool = name.take(64), tier = spec?.tier?.name, detail = "not_allowed"))
+            return result("This tool isn't available.", isError = true)
+        }
+        // The user's tool policy (ALLOW/ASK/DENY) still applies to every call Claude asks for.
+        val allowed = (access.authorize(listOf(spec), null) as? AccessResult.Granted)?.tools.orEmpty().any { it.name == name }
+        if (!allowed) {
+            audit.record(AuditEvent(AuditCategory.TOOL, "call", "denied", tool = name, tier = spec.tier.name, detail = "policy"))
+            return result("The user's settings don't allow this tool.", isError = true)
+        }
+        val connector = connectors[spec.connectorId] ?: return result("Not connected.", isError = true)
+        val args = use["input"] as? JsonObject ?: EMPTY_ARGS
+        return when (val r = connector.callTool(name, args)) {
+            is ConnectorCall.Ok -> {
+                audit.record(AuditEvent(AuditCategory.TOOL, "call", if (r.toolError) "error" else "ok", tool = name, tier = spec.tier.name, detail = PHONE))
+                if (!r.toolError && !spec.helper) stamps[name] = DataStamp(connector.displayName, name, clock(), cached = false)
+                result(r.text, r.toolError)
+            }
+            ConnectorCall.NeedsSignIn -> {
+                audit.record(AuditEvent(AuditCategory.TOOL, "call", "signin_needed", tool = name, tier = spec.tier.name, detail = PHONE))
+                result("${connector.displayName} isn't signed in. Tell the user to sign in from Settings.", isError = true)
+            }
+            is ConnectorCall.Failed -> {
+                audit.record(AuditEvent(AuditCategory.TOOL, "call", "error", tool = name, tier = spec.tier.name, detail = PHONE))
+                result("${connector.displayName} couldn't be reached.", isError = true)
+            }
+        }
+    }
+
+    private fun assistantMessage(content: List<JsonObject>) = buildJsonObject {
+        put("role", "assistant")
+        put("content", JsonArray(content))
     }
 
     private suspend fun auditRequest(outcome: String, route: RouteDecision?, connectorId: String?, model: String? = route?.model) {
@@ -308,18 +443,19 @@ class AgentLoop(
     private suspend fun FlowCollector<AgentEvent>.emitFailure(error: AgentError, text: StringBuilder) =
         emit(AgentEvent.Failed(error, text.toString()))
 
-    private suspend fun refreshServers(route: RouteDecision, servers: MutableList<McpServerConfig>): Boolean {
-        servers.clear()
-        for (cid in route.connectorIds) {
-            val c = connectors[cid] ?: continue
-            if (!c.onAuthRejected()) return false
-            servers += c.mcpServer() ?: return false
-        }
-        return true
-    }
-
     companion object {
         const val MAX_CONTINUATIONS = 3
+        /** Rounds of phone-run tools per question (e.g. name lookup, then price). */
+        const val MAX_TOOL_ROUNDS = 4
+        /** Tool results sent back to Claude are clipped (public market data; keeps requests small). */
+        const val MAX_TOOL_RESULT_CHARS = 8_000
+        private const val NET_WORTH_TOOL = "networth_snapshot"
+        /** Sent instead of an answer that was made on the phone from personal data. */
+        const val PRIVATE_ANSWER = "[answered privately on the phone]"
+        /** Public market tools Claude may ask the phone to run. */
+        private val PUBLIC_TOOLS = ToolRegistry.all.filter { it.connectorId == ToolRegistry.INDMONEY && !it.isPersonal }.map { it.name }
+        private const val PHONE = "live·phone"
+        private val EMPTY_ARGS = JsonObject(emptyMap())
         /** Shown as the "model" for answers made on the phone. */
         const val LOCAL_MODEL = "on-device"
         /** Completed turns resent per request (4 exchanges; context compaction lands in Phase 7). */
@@ -328,11 +464,13 @@ class AgentLoop(
         const val MAX_TURN_CHARS = 1200
 
         /**
-         * Keeps the most recent turns, guarantees the list starts with a user turn, and clips long
+         * Replaces private answers with a placeholder (D29: the question stays for context, the data never does),
+         * keeps the most recent turns, guarantees the list starts with a user turn, and clips long
          * old turns (keeping their start) so one long answer doesn't get re-billed on every request.
          */
         fun trimHistory(history: List<ChatTurn>): List<ChatTurn> =
-            history.takeLast(MAX_HISTORY_TURNS)
+            history.map { if (it.personal && it.role == ChatTurn.Role.ASSISTANT) it.copy(text = PRIVATE_ANSWER) else it }
+                .takeLast(MAX_HISTORY_TURNS)
                 .dropWhile { it.role != ChatTurn.Role.USER }
                 .map { if (it.text.length > MAX_TURN_CHARS) it.copy(text = it.text.take(MAX_TURN_CHARS) + " […]") else it }
 
@@ -351,14 +489,6 @@ class AgentLoop(
                 min < 60 -> "$min min ago"
                 else -> "${min / 60} h ago"
             }
-        }
-
-        /** Heuristic: the API reports MCP server auth failures as 400s mentioning the server/auth. */
-        fun looksLikeMcpAuthError(message: String): Boolean {
-            val m = message.lowercase()
-            val mentionsMcp = "mcp" in m || "server" in m
-            val mentionsAuth = listOf("401", "403", "unauthor", "authenticat", "authoriz", "token", "forbidden").any { it in m }
-            return mentionsMcp && mentionsAuth
         }
 
         fun mapError(e: LlmException): AgentError = when (e) {

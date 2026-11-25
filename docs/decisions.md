@@ -493,3 +493,144 @@ The user asked to say the PIN out loud. CLAUDE.md section 6 requires "spoken PIN
   - The 3-strike lockout is unchanged, and only biometrics can reset it.
 - **PIN digits** come from the phone's on-device recognizer (never a cloud one) and Moonshine; the first clean 4-8
   digit answer is used.
+
+## D29: Personal data stays on the phone (Gmail, Calendar, Drive, INDmoney), 2026-11-22
+**Status: step 2 (INDmoney) built 2026-11-22; Google steps still proposed. Choices marked "pick" need the
+user's answer before the matching step.**
+This changes CLAUDE.md section 2 (connectors via the Anthropic MCP connector) and section 12, Phase 6.
+
+**Rule.** Connector tokens never leave the phone, except to the service they belong to. Raw emails, files, events
+and holdings never go to Claude. Claude gets personal data only for a feature the user has opted in to, redacted on
+the phone, with a preview the first time. The default is nothing personal. No new cloud services.
+
+**INDmoney: the app becomes the MCP client.**
+- Today the token goes to Anthropic inside `mcp_servers`, so Anthropic sees the token and every tool result.
+- The app already does INDmoney's OAuth (discovery, dynamic registration, PKCE, refresh) and an MCP `initialize`
+  call (`McpProbe`). Step 2 adds `tools/list` and `tools/call` over Streamable HTTP, on OkHttp +
+  kotlinx.serialization: JSON-RPC POST, a JSON or SSE reply, the `Mcp-Session-Id` header and the protocol-version
+  header.
+- Not the official MCP Kotlin SDK: it brings Ktor alongside OkHttp and is far more than three JSON-RPC calls need.
+- `mcp_servers` and the MCP beta header are removed from Anthropic requests. Tests check that no request body
+  contains a token or holdings.
+- Risk: the tools' output format isn't documented. The first device run logs only the shape (field names and
+  types, no values; debug builds, tag `JarvisShape`) so templates can be written against it.
+- Built (step 2):
+  - Personal tools (above Tier 0) never reach Claude: the agent answers them on the phone (`FinanceAnswers`
+    templates). Unknown shapes fall back to a plain list of the top-level fields, never a guess.
+  - Public market tools become ordinary client tools. The phone runs them, and the loop refuses any personal or
+    unrouted tool Claude asks for.
+  - Turns answered from personal data are flagged and never resent as history.
+  - The budget stop doesn't apply to on-phone answers (they're free).
+  - Narrow portfolio questions ("allocation breakdown") are answered from the whole-account snapshot, because
+    the narrower tools need arguments.
+  - Offline: the last saved result, labelled with its age.
+  - Before D29, saved snapshots were also attached to Claude requests as `<cached_data>`. That is removed.
+- **Smart routing (user's choice: option B, 2026-11-22).** A phrase list missed phrasings like "savings account
+  balance", so Claude now categorises every question (except time/date/battery/lock, answered locally).
+  - Claude is offered the public market tools (the phone runs them, under the tool policy) and `private_data`
+    (kinds: net_worth, bank_balance, holdings, sips, watchlist; several at once; optional `item` for one holding).
+    No personal tool is ever offered.
+  - Calling `private_data` ends the Claude turn. The phone runs the security gate (fingerprint/PIN, screen-only
+    rules) and answers. Claude never receives the data.
+  - Follow-ups: earlier questions stay in the history Claude sees, private answers become
+    "[answered privately on the phone]". This gives Claude the context for "and my SIPs?" without the numbers.
+  - The phrase list is only a backup: Claude unreachable (offline) or the monthly budget used up.
+  - Cost: one small Haiku call per personal question (the routing), about $0.0002. General finance words
+    ("money", "fund", "invest") no longer trigger personal data.
+  - Rejected: an on-device embedding classifier (A) and Gemini Nano (C), for now. The user chose B.
+
+**Google sign-in: Google Identity Services `AuthorizationClient` (play-services-auth).**
+- Google's current recommendation for access to Google user data on Android, with Credential Manager for sign-in.
+  JARVIS needs no sign-in identity, only authorization.
+- Google Play services holds the grant and returns short-lived access tokens on the phone. The app keeps no
+  refresh token and no client secret, and needs no backend. It calls `authorize()` again when a token expires,
+  silently while the grant is valid. If Google needs the user (grant revoked or expired), JARVIS shows "Google
+  sign-in expired. Sign in again".
+- Android OAuth client = package `dev.jarvis` + the APK's SHA-1. Each user makes their own Cloud project
+  (bring-your-own, like the API key). Steps are in docs/setup-keys.md section 3.
+- Rejected: AppAuth with a refresh token in `SecretStore`. That's more token handling for the app, and Google
+  steers Android apps to the Authorization API.
+
+**Scopes (minimal).**
+- Gmail: `gmail.readonly` (restricted). The app requests only `format=metadata` (From, Subject, Date) and the
+  snippet. It never downloads bodies or attachments in this phase. `gmail.metadata` would also be restricted, and
+  it blocks the `q=` search that "email from X" needs.
+- Drive: `drive.metadata.readonly` (restricted): names, types, folders, dates, no file content. `drive.file` is
+  too narrow: it covers only files the app created or opened, so "find the file called Y" wouldn't work.
+- Calendar: **recommended without OAuth.** Read the calendar Android already syncs, through `CalendarContract`
+  (`READ_CALENDAR` permission). There's no Google Cloud scope, no token, it works offline, and it covers every
+  account on the phone. Read-only now. Writes (Tier 3) come later through the same provider. **Pick:** this, or
+  the Calendar API with `calendar.readonly`.
+
+**Weekly re-login.** In "Testing" status Google ends a test user's grant 7 days after consent. The plan is to
+publish the Cloud project "In production" without verification. That's allowed for personal use under 100 users,
+shows a one-time "Google hasn't verified this app" warning, and has no 7-day expiry. Open question for the public
+release: every user has to create their own Cloud project and Android client, and Google may not allow the same
+package + SHA-1 in two projects. Check this before Phase 10.
+
+**On-device answers first.** A local intent router extends `LocalAnswers`: unread count, "email from X", today's
+events, "next meeting", net worth, SIPs, "find the file Y". These are templates over the Room cache, with no LLM
+call and no Claude call. Anything the router doesn't match that needs personal data gets "I can't answer that on
+the phone. Allow sending a redacted version to Claude?", which leads to that feature's consent setting.
+
+**On-device LLM for summaries (optional). Depends on the exact phone model (not known yet; adb was offline).**
+- **ML Kit GenAI (Gemini Nano through AICore)** is the first choice when the phone is on Google's list. The vivo
+  X200, X200 Pro, X200T, X300 series, X500 Pro and X Fold3 Pro/5/6 are listed (Prompt API on Gemini Nano 4); the
+  T4 Ultra and X200 FE are listed with Gemini Nano 2.
+  - Nothing ships in the APK; AICore downloads the model. Free.
+  - Beta. Summarization takes up to about 4000 tokens and gives 1-3 bullets, in English.
+  - **Foreground only:** a call from a background service fails with `BACKGROUND_USE_BLOCKED`. It works in Chat
+    and on the wake screen, but not hands-free in a pocket (screen off). There it falls back to counts and lists.
+- **Otherwise: LiteRT-LM** (Google's successor to MediaPipe LLM Inference, which is now deprecated on Android).
+  Kotlin API stable; CPU, GPU and NPU. It runs in a background service too. Model choices:
+  - Qwen3-0.6B: 586 MB, Apache-2.0. Measured on a vivo X300 Pro at about 21 tokens/s on GPU.
+  - Gemma3-1B: 1.0 GB, Gemma terms of use (check that the licence is compatible).
+  - Gemma-3n-E2B: 3 GB. Too big for a download on demand.
+  The model is downloaded on demand and hash-checked, like the Moonshine models, never put in the APK.
+  LiteRT-LM's own licence needs checking before use.
+- **Pick (in step 5):** ML Kit if supported, LiteRT-LM + Qwen3-0.6B otherwise, or summaries off. If summaries are
+  off, the user gets lists and counts.
+- **Update 2026-11-25: on-device LLM dropped (user decision).** The user tried an on-device model before: too slow,
+  too much RAM, and the phone hung. Claude is the only brain. Every question goes to Claude, which decides whether
+  to answer itself, use public/internet tools, or hand the question back to the phone with `private_data`
+  (finance, email, calendar, call log...), where the phone fetches and answers without Claude seeing the data.
+  The phrase-list router stays only as the backup (offline, over budget, no key). Step 5 is cancelled; without
+  consent, personal answers are lists and counts, not summaries.
+
+**Consent and redaction.** Each feature (Email, Calendar, Drive, Finance) has the setting "Never send to Claude"
+(the default) or "Send minimal, redacted data". Redaction runs on the phone and strips email addresses, phone
+numbers, account, card and IFSC-style numbers, OTPs and codes, URLs with tokens, and amounts unless the feature
+needs them. The first send shows the exact text and asks for approval. Tests cover the redactor with adversarial
+inputs and check that "Never" means no personal field in any request body.
+
+**Privacy filters.** Excluded Gmail labels and senders are dropped before caching. Banks, OTP and 2FA senders and
+the Promotions category are excluded by default. Excluded Drive folders. A "Private mode" switch blocks every
+connector, including the cache.
+
+**Unchanged.** Tiers (email, calendar and Drive need a recent unlock; finance needs PIN or fingerprint), spoken
+confirmation for sends and edits, email and file content treated as untrusted data, and an audit entry for every
+access (service, tier and counts, no content).
+
+**Offline cache.** Room tables for inbox headers (sender, subject, date, snippet, labels, unread), today's and
+tomorrow's events, Drive file metadata and the last portfolio snapshot, each with "last updated". Kept short and
+deleted with "Clear saved data". Database encryption is still the open question from D14.
+
+## D30: Call log and call recordings (user request), 2026-11-25
+- **Call log:** `READ_CALL_LOG`, tool group `calls`, Tier 1 (recent unlock). Answered on the phone through
+  `private_data` like finance ("missed calls today", "when did X last call?"). Play policy allows this permission
+  only for default Phone/SMS/Assistant handlers; JARVIS registers as the assistant (Phase 5b) and is sideloaded anyway.
+- **Call recordings:** Android blocks third-party call recording (Play policy since 2022; no call audio source for
+  apps), so JARVIS never records. It reads files the phone's built-in dialer already saved, from a folder the user
+  picks once (Storage Access Framework, no broad storage permission). Verify the vivo dialer's folder on the device.
+- **Transcription on the phone** with the speech models already in the app (not an LLM), in the background while
+  charging. Transcripts stay in the encrypted local DB; keyword search runs on the phone.
+- **Claude** sees transcript text only per D29 consent ("Send minimal, redacted data" for the Calls feature), with
+  a preview the first time. Call recording laws vary; the user is responsible for the recordings their dialer makes.
+- To verify before building: current `READ_CALL_LOG` rules on Android 16, SAF access to the dialer folder, and
+  transcription speed for long recordings on the user's phone.
+
+## D31: JARVIS feature set after Phase 6 (user-approved), 2026-11-25
+Ideas taken from open-source assistants (isair/jarvis knowledge-graph memory, proactive Jarvis repos, OpenClaw's
+heartbeat checklist). Ideas only; no code copied. OpenClaw's community skill store is not used (not audited).
+Built as Phase 6c, one feature at a time: People view, meeting prep, missed-call follow-ups, editable watch list,
+night debrief, location routines, bills and subscriptions, travel, screen awareness + camera. Each follows D29.

@@ -15,7 +15,7 @@ import dev.jarvis.claude.AnthropicClient
 import dev.jarvis.claude.LlmClient
 import dev.jarvis.claude.UsageMeter
 import dev.jarvis.connectors.Connector
-import dev.jarvis.connectors.McpProbe
+import dev.jarvis.connectors.McpClient
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
 import dev.jarvis.connectors.oauth.OAuthClient
 import dev.jarvis.data.AuditLog
@@ -132,11 +132,11 @@ object AppModule {
     fun oauthClient(http: OkHttpClient, json: Json) = OAuthClient(http, json)
 
     @Provides @Singleton
-    fun mcpProbe(http: OkHttpClient) = McpProbe(http)
+    fun mcpClient(http: OkHttpClient, json: Json) = McpClient(http, json)
 
     @Provides @Singleton
-    fun indMoney(secrets: SecretStore, oauth: OAuthClient, probe: McpProbe, audit: AuditLog) =
-        IndMoneyConnector(secrets, oauth, probe, audit = audit)
+    fun indMoney(secrets: SecretStore, oauth: OAuthClient, mcp: McpClient, audit: AuditLog) =
+        IndMoneyConnector(secrets, oauth, mcp, audit = audit)
 
     @Provides @Singleton
     fun connectors(indMoney: IndMoneyConnector): Map<String, @JvmSuppressWildcards Connector> =
@@ -206,6 +206,7 @@ object AppModule {
             spokenPinReady = { settings.current().speakReplies && voicePin.ready() && !pin.isLocked() },
         ),
         snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
+        debugLog = shapeLog,
     )
 
     /** Battery level and charging state from the system (no permission needed). */
@@ -253,6 +254,10 @@ object AppModule {
         @ApplicationContext c: Context,
     ) = AgentLoop(
         llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
-        requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
+        requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) }, debugLog = shapeLog,
     )
+
+    /** Debug builds only: result shapes (field names, never values) for writing on-phone templates. */
+    private val shapeLog: ((String) -> Unit)? =
+        if (dev.jarvis.BuildConfig.DEBUG) { msg -> android.util.Log.d("JarvisShape", msg) } else null
 }

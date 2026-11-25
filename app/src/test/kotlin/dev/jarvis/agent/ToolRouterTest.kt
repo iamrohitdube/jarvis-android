@@ -75,4 +75,16 @@ class ToolRouterTest {
         assertEquals("claude-opus-5-5", ToolRouter.route("my portfolio", s).model)
         assertEquals("claude-sonnet-5-5", ToolRouter.route("hi", s).model)
     }
+
+    @Test fun clearBankPhrasesAreAnsweredOnThePhone() {
+        listOf("what's my savings account balance", "bank balance", "how much money in my bank").forEach {
+            assertTrue(it, ToolRouter.route(it, settings).tools.any { t -> t.name == "networth_snapshot" })
+        }
+    }
+
+    @Test fun generalFinanceQuestionsAreNotTreatedAsPersonal() {
+        listOf("what is a mutual fund", "is it a bank holiday tomorrow", "how much money does a pilot earn", "how do I start investing").forEach {
+            assertTrue(it, ToolRouter.route(it, settings).tools.none { t -> t.isPersonal })
+        }
+    }
 }

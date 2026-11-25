@@ -4,11 +4,14 @@ import dev.jarvis.agent.ToolRegistry
 import dev.jarvis.data.AuditCategory
 import dev.jarvis.data.AuditEvent
 import dev.jarvis.data.AuditSink
-import dev.jarvis.claude.McpServerConfig
 import dev.jarvis.connectors.Connector
 import dev.jarvis.connectors.ConnectorStatus
 import dev.jarvis.connectors.ConnectorTestResult
-import dev.jarvis.connectors.McpProbe
+import dev.jarvis.connectors.ConnectorCall
+import dev.jarvis.connectors.McpClient
+import dev.jarvis.connectors.McpEndpoint
+import dev.jarvis.connectors.McpResult
+import dev.jarvis.connectors.McpToolDef
 import dev.jarvis.connectors.oauth.AuthServerMetadata
 import dev.jarvis.connectors.oauth.ClientRegistration
 import dev.jarvis.connectors.oauth.OAuthClient
@@ -22,16 +25,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonObject
 
 /**
  * INDmoney MCP (https://mcp.indmoney.com/mcp). OAuth 2.1 + PKCE with dynamic client registration,
  * as advertised by the server's metadata. Read-only scopes only (no insights:write).
  * Sign-in happens in the browser (Custom Tab): INDmoney credentials never touch this app.
+ * The app is the MCP client (D29): the token is sent only to INDmoney, never to Anthropic.
  */
 class IndMoneyConnector(
     private val secrets: SecretStore,
     private val oauth: OAuthClient,
-    private val probe: McpProbe,
+    private val mcp: McpClient,
     private val clock: () -> Long = System::currentTimeMillis,
     private val mcpUrl: String = MCP_URL,
     /** Connector events (sign-in, refresh, sign-out) for the audit log. Never receives tokens. */
@@ -42,6 +47,7 @@ class IndMoneyConnector(
 
     private val mutex = Mutex()
     private var metadata: AuthServerMetadata? = null
+    private var toolDefs: List<McpToolDef>? = null
     private val needsReauth = MutableStateFlow(false)
 
     override val status: Flow<ConnectorStatus> = combine(secrets.presence(), needsReauth) { present, reauth ->
@@ -94,17 +100,32 @@ class IndMoneyConnector(
         event("manual_token", "ok")
     }
 
-    override suspend fun mcpServer(): McpServerConfig? = mutex.withLock {
-        val access = secrets.get(SecretKey.INDMONEY_ACCESS_TOKEN) ?: return@withLock null
-        val expiresAt = secrets.get(SecretKey.INDMONEY_TOKEN_EXPIRES_AT)?.toLongOrNull()
-        val current = TokenSet(access, secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN), expiresAt)
-        val token = if (current.isExpired(clock())) refreshLocked(current) ?: return@withLock null else current
-        McpServerConfig(name = id, url = mcpUrl, authorizationToken = token.accessToken)
+    override suspend fun callTool(name: String, arguments: JsonObject): ConnectorCall {
+        val endpoint = endpoint() ?: return ConnectorCall.NeedsSignIn
+        return when (val r = mcp.callTool(endpoint, name, arguments)) {
+            is McpResult.Ok -> ConnectorCall.Ok(r.value.bestText, r.value.isError)
+            is McpResult.Error -> ConnectorCall.Failed(r.message)
+            McpResult.Unauthorized -> {
+                val refreshed = refreshAfterRejection() ?: return ConnectorCall.NeedsSignIn
+                when (val again = mcp.callTool(refreshed, name, arguments)) {
+                    is McpResult.Ok -> ConnectorCall.Ok(again.value.bestText, again.value.isError)
+                    is McpResult.Error -> ConnectorCall.Failed(again.message)
+                    McpResult.Unauthorized -> { needsReauth.value = true; ConnectorCall.NeedsSignIn }
+                }
+            }
+        }
     }
 
-    override suspend fun onAuthRejected(): Boolean = mutex.withLock {
-        val access = secrets.get(SecretKey.INDMONEY_ACCESS_TOKEN) ?: return@withLock false
-        refreshLocked(TokenSet(access, secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN), null)) != null
+    /** Server tool definitions, fetched once per process (they're public and stable). */
+    override suspend fun toolDefinitions(names: Collection<String>): List<McpToolDef> {
+        val all = toolDefs ?: run {
+            val endpoint = endpoint() ?: return emptyList()
+            val r = mcp.listTools(endpoint).let { first ->
+                if (first == McpResult.Unauthorized) refreshAfterRejection()?.let { mcp.listTools(it) } ?: first else first
+            }
+            (r as? McpResult.Ok)?.value?.also { toolDefs = it } ?: return emptyList()
+        }
+        return all.filter { it.name in names }
     }
 
     override suspend fun test(): ConnectorTestResult = testInner().also {
@@ -112,20 +133,37 @@ class IndMoneyConnector(
     }
 
     private suspend fun testInner(): ConnectorTestResult {
-        val server = mcpServer()
+        val endpoint = endpoint()
             ?: return ConnectorTestResult.Failed("INDmoney is not signed in.", needsReauth = true)
-        return when (val r = probe.initialize(server)) {
-            McpProbe.Result.Ok -> { needsReauth.value = false; ConnectorTestResult.Ok }
-            McpProbe.Result.Unauthorized -> {
-                if (onAuthRejected() && probe.initialize(mcpServer() ?: server) == McpProbe.Result.Ok) {
+        return when (val r = mcp.initialize(endpoint)) {
+            is McpResult.Ok -> { needsReauth.value = false; ConnectorTestResult.Ok }
+            McpResult.Unauthorized -> {
+                val refreshed = refreshAfterRejection()
+                if (refreshed != null && mcp.initialize(refreshed) is McpResult.Ok) {
                     ConnectorTestResult.Ok
                 } else {
                     needsReauth.value = true
                     ConnectorTestResult.Failed("INDmoney sign-in expired. Sign in again.", needsReauth = true)
                 }
             }
-            is McpProbe.Result.Error -> ConnectorTestResult.Failed(r.message, needsReauth = false)
+            is McpResult.Error -> ConnectorTestResult.Failed(r.message, needsReauth = false)
         }
+    }
+
+    /** The endpoint with a currently valid token (refreshing if expired), or null if not signed in. */
+    internal suspend fun endpoint(): McpEndpoint? = mutex.withLock {
+        val access = secrets.get(SecretKey.INDMONEY_ACCESS_TOKEN) ?: return@withLock null
+        val expiresAt = secrets.get(SecretKey.INDMONEY_TOKEN_EXPIRES_AT)?.toLongOrNull()
+        val current = TokenSet(access, secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN), expiresAt)
+        val token = if (current.isExpired(clock())) refreshLocked(current) ?: return@withLock null else current
+        McpEndpoint(name = displayName, url = mcpUrl, token = token.accessToken)
+    }
+
+    /** INDmoney rejected the token: try one refresh. */
+    private suspend fun refreshAfterRejection(): McpEndpoint? = mutex.withLock {
+        val access = secrets.get(SecretKey.INDMONEY_ACCESS_TOKEN) ?: return@withLock null
+        val fresh = refreshLocked(TokenSet(access, secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN), null)) ?: return@withLock null
+        McpEndpoint(name = displayName, url = mcpUrl, token = fresh.accessToken)
     }
 
     override suspend fun signOut() = mutex.withLock {
@@ -134,6 +172,7 @@ class IndMoneyConnector(
             SecretKey.INDMONEY_PENDING_STATE, SecretKey.INDMONEY_PENDING_VERIFIER,
         )
         needsReauth.value = false
+        mcp.reset()
         event("sign_out", "ok")
     }
 

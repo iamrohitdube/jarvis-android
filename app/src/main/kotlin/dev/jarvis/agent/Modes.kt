@@ -50,7 +50,7 @@ object Modes {
 
     val CHAT = Mode(
         id = "chat",
-        instructions = "Mode: chat. Use tools only when the question needs the user's own data.",
+        instructions = "Mode: chat. Use tools when the question needs the user's own data or live market data.",
         allowedGroups = setOf(ToolGroup.FINANCE),
         // Thinking and tool calls count toward this cap; the spoken answer itself is short (persona).
         maxTokens = 1200,

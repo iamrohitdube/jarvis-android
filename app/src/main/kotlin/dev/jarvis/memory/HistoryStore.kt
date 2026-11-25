@@ -1,5 +1,6 @@
 package dev.jarvis.memory
 
+import dev.jarvis.agent.AgentLoop
 import dev.jarvis.agent.ChatTurn
 import dev.jarvis.agent.DataStamp
 import dev.jarvis.data.db.ConversationEntity
@@ -87,8 +88,10 @@ class HistoryStore(
                 val m = messages[i]
                 val next = messages.getOrNull(i + 1)
                 if (m.role == USER && next != null && next.role == ASSISTANT && !next.failed && next.text.isNotBlank()) {
-                    out += ChatTurn(ChatTurn.Role.USER, m.text)
-                    out += ChatTurn(ChatTurn.Role.ASSISTANT, next.text)
+                    // Connector data answered on the phone (or any Tier 2 reply) never goes back to Claude (D29).
+                    val personal = next.sensitive || (next.model == AgentLoop.LOCAL_MODEL && next.dataSources != null)
+                    out += ChatTurn(ChatTurn.Role.USER, m.text, personal)
+                    out += ChatTurn(ChatTurn.Role.ASSISTANT, next.text, personal)
                 }
             }
             return out

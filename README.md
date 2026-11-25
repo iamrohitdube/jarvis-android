@@ -32,7 +32,10 @@ server. You bring your own Anthropic API key.
 - JARVIS HUD design: always dark, arc-reactor blue, frosted-glass cards.
 - Chat screen with streaming replies, a Stop button and plain-language errors with a fix button.
 - Secure settings. The Anthropic key and connector tokens are encrypted with the Android Keystore.
-- INDmoney through Claude's MCP connector:
+- INDmoney, called by the phone itself (D29). Your token, net worth and holdings never go to Anthropic:
+  - portfolio questions ("net worth", "my SIPs", "holdings") are answered on the phone, free, and work offline
+    from the last saved result
+  - market questions (stock prices, funds) go to Claude, which asks the phone to look them up
   - browser sign-in (OAuth 2.1 + PKCE)
   - read-only scopes
   - automatic token refresh
@@ -84,7 +87,8 @@ each with an in-app explanation.
 ## Privacy and security
 - No analytics or telemetry. Usage stats, chat history, saved data and the audit log stay on the phone and are
   excluded from backups.
-- Your messages, plus data from connectors you use, are sent to Anthropic's API to produce answers.
+- Your messages are sent to Anthropic's API to produce answers. Personal data (portfolio, and later email,
+  calendar and files) is answered on the phone and isn't sent to Anthropic, nor are connector tokens (D29).
 - Secrets never go in the repo, logs or backups. See [docs/security.md](docs/security.md).
 
 ## Building

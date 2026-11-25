@@ -28,8 +28,12 @@ Open-source (bring-your-own-keys). Kotlin + Jetpack Compose. PC client comes lat
 - Call the Anthropic Messages API directly from the app, streaming.
 - Models configurable. Default claude-sonnet-5-5; route quick/simple lookups to claude-haiku-5-5
   (per-mode model routing in Settings).
-- MCP connector for INDmoney (https://mcp.indmoney.com/mcp), Gmail, Google Calendar, Drive/Sheets.
-  Beta header currently `mcp-client-2025-11-20` (verify). App handles OAuth token expiry and re-auth prompts.
+- Personal data is private by default (D29). Connectors run ON THE PHONE: the app itself calls INDmoney
+  (as an MCP client, https://mcp.indmoney.com/mcp), Gmail, Calendar and Drive. Connector tokens never leave
+  the phone except to that service, and are never in Anthropic requests (no `mcp_servers`).
+  Raw emails, files, events and holdings are never sent to Claude. Common questions are answered on the phone
+  (templates; no on-device LLM, D29 update). Claude gets personal data only per feature, opt-in, redacted on the
+  phone, with a preview the first time. App handles OAuth token expiry and re-auth prompts.
 - Users paste their own API key and connector tokens in Settings; store encrypted.
   Show a notice: "Set a monthly spend limit on your Anthropic key."
 - Token efficiency (design requirement):
@@ -53,7 +57,7 @@ Modes are config objects (system prompt, allowed tool groups, model, max tokens,
 ## 4. Skills and tools
 - Every capability is a tool in a catalog: name, description, tool group, risk level, auth tier,
   confirmation required (yes/no). The agent sees only relevant groups per request.
-- Tool groups: finance, career, calendar, email, messaging, navigation, phone-control, memory, web, vision.
+- Tool groups: finance, career, calendar, email, calls, messaging, navigation, phone-control, memory, web, vision.
 - Optional later: import skills following the agentskills.io format. Any imported skill must be scanned
   and approved by the user before activation (no auto-running third-party skills).
 
@@ -115,6 +119,10 @@ File guard: the assistant has no access to the app's key storage or other apps' 
 - Email via Gmail API. WhatsApp: read via notification listener; send only via notification reply action
   after confirmation. Check current WhatsApp terms; avoid anything that automates the account.
 - SMS: SEND_SMS/READ_SMS in a dedicated module with explicit permission flows.
+- Calls (D30): call log via READ_CALL_LOG (Tier 1; "who called?", "missed calls from X"). Call recordings: the app
+  cannot record calls (Android blocks it); it only reads recordings the phone's own dialer saved, from a folder the
+  user picks (Storage Access Framework). Transcribed on the phone (no on-device LLM); keyword search on the phone.
+  Recording text goes to Claude only per D29 consent + redaction. Never record or transcribe a call live.
 
 ## 8. Voice pipeline
 Trigger -> STT -> Claude (stream) -> TTS (speak sentence by sentence as they arrive).
@@ -191,7 +199,18 @@ wake word engine status, last errors.
 5. Wake word: foreground service, WakeWordEngine + Porcupine, battery/permission flows.
 5b. Riding mode: assistant-role registration, Bluetooth audio routing, helmet trigger, ducking,
     riding restrictions, Maps navigation prototype. Test on a real phone with the C40 before moving on.
-6. Calendar + Gmail (read-only), then SMS/notification messaging with confirmations (section 7).
+6. Private personal data (D29, docs/handoff-private-data.md), one step at a time: INDmoney off Anthropic
+   (in-app MCP client + local answers); Google sign-in + Gmail read-only; Calendar read-only; Drive metadata
+   search; consent + redaction settings. All with offline cache, privacy
+   filters, audit, and tests proving nothing personal reaches Anthropic. Then call log and call recordings (D30),
+   then SMS/notification messaging
+   with confirmations (section 7).
+6c. JARVIS features (D31), after Phase 6, one at a time, stop after each:
+   1 People view (calls, email, meetings, messages per person; "prep me for my call with X");
+   2 meeting prep card before meetings; 3 missed-call follow-ups; 4 user-editable watch list re-checked on a timer;
+   5 night debrief; 6 location routines (geofences); 7 bills and subscriptions from SMS/email;
+   8 travel (PNR/flights from email, leave-now reminders, boarding pass); 9 screen awareness + camera ("what's this?").
+   All follow D29: personal data answered on the phone; Claude only with consent, redacted.
 7. Memory: knowledge-base notes, persona file, "remember/forget" commands, context compaction.
 8. Briefing + Monitor modes (WorkManager), notifications, offline action queue with sync-on-reconnect.
 9. JARVIS features, one at a time: vision ("what is this?", bill reading), notification triage,
