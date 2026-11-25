@@ -665,8 +665,9 @@ reaches the user.
 ## D33: Unlocked phone needs no PIN; spoken PIN without voice match (user request), 2026-11-25
 **Unlocked phone.** New Security setting "No PIN while the phone is unlocked", on by default. While the phone is
 unlocked (keyguard passed), personal (Tier 1) and sensitive (Tier 2) READS are granted without "PIN or
-fingerprint?" (`AuthCoordinator.deviceUnlocked`, method `DEVICE_UNLOCK`, audited as `device_unlock`). Sensitive
-answers granted this way are shown on screen only, not spoken (the phone may be in a room with others). A locked
+fingerprint?" (`AuthCoordinator.deviceUnlocked`, method `DEVICE_UNLOCK`, audited as `device_unlock`). Answers
+granted this way are spoken as well as shown (user's choice after testing, 2026-11-25; quiet mode still keeps them
+on screen). Fingerprint answers stay screen only. A locked
 phone (lock screen, pocket, hands-free) still needs PIN or fingerprint; Tier 3 actions are never covered; tool
 policy DENY still wins. Turning the setting on needs fingerprint or screen lock; turning it off doesn't.
 Trade-off: anyone holding the unlocked phone can ask about finances, as with the INDmoney app itself.

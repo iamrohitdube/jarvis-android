@@ -292,7 +292,7 @@ class AuthCoordinatorTest {
         val r = trusting.authorize(listOf(netWorth), null) as AccessResult.Granted
         assertEquals(AuthMethod.DEVICE_UNLOCK, r.method)
         assertTrue(r.sensitive)
-        assertTrue("sensitive data from an unlocked phone stays on screen, not spoken", r.screenOnly)
+        assertFalse("answers on an unlocked phone are spoken too (user choice, D33)", r.screenOnly)
         assertNull(trusting.prompt.value)
         assertTrue(audit.events.any { it.action == "device_unlock" && it.outcome == "ok" })
         assertTrue(trusting.unlock()) // saved sensitive messages open without a prompt too

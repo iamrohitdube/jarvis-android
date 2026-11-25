@@ -152,7 +152,9 @@ class AuthCoordinator(
         AccessResult.Granted(
             tools = allowed,
             method = method,
-            screenOnly = method != null && method != AuthMethod.PIN && tier >= AuthTier.SENSITIVE,
+            // Fingerprint means "people may be near": screen only. PIN (said when alone) and an unlocked phone
+            // (the user's choice, D33) are spoken too.
+            screenOnly = (method == AuthMethod.BIOMETRIC || method == AuthMethod.DEVICE_CREDENTIAL) && tier >= AuthTier.SENSITIVE,
             sensitive = tier >= AuthTier.SENSITIVE,
         )
     }
