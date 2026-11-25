@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var auth: AuthCoordinator
     @Inject lateinit var sendCoordinator: dev.jarvis.messaging.SendCoordinator
+    @Inject lateinit var consentCoordinator: dev.jarvis.agent.ConsentCoordinator
     @Inject lateinit var sessions: SessionManager
     @Inject lateinit var biometric: AndroidBiometricAvailability
 
@@ -117,6 +118,7 @@ class MainActivity : ComponentActivity() {
                     } ?: Box(Modifier.fillMaxSize())
                     AuthHost(auth)
                     dev.jarvis.ui.security.SendHost(sendCoordinator)
+                    dev.jarvis.ui.security.ConsentHost(consentCoordinator)
                 }
             }
         }

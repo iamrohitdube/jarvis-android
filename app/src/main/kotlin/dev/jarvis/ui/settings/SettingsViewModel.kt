@@ -43,6 +43,8 @@ class SettingsViewModel @Inject constructor(
     private val recordingIndexer: dev.jarvis.connectors.phone.RecordingIndexer,
     private val transcripts: dev.jarvis.data.db.TranscriptDao,
     sentMessages: dev.jarvis.data.db.SentMessageDao,
+    private val authCoordinator: dev.jarvis.security.AuthCoordinator,
+    private val biometric: dev.jarvis.security.AndroidBiometricAvailability,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val gmail: dev.jarvis.connectors.google.GmailConnector,
     private val drive: dev.jarvis.connectors.google.DriveConnector,
@@ -352,6 +354,31 @@ class SettingsViewModel @Inject constructor(
 
     /** After a permission dialog (or returning from Android settings). */
     fun refreshLocalSources() = localSources.forEach { it.refreshStatus() }
+
+    // ---- Privacy (D29 step 6) ----
+    val privacyMessage = MutableStateFlow<String?>(null)
+
+    fun setPrivateMode(on: Boolean) = viewModelScope.launch {
+        repo.setPrivateMode(on)
+        audit.record(AuditEvent(AuditCategory.DATA, "private_mode", if (on) "on" else "off"))
+    }
+
+    /** Allowing a feature's data to go to Claude needs fingerprint or screen lock; taking it back never does. */
+    fun setConsent(group: dev.jarvis.agent.ToolGroup, on: Boolean) = viewModelScope.launch {
+        if (on && biometric.deviceSecure() && authCoordinator.strongAuth() == null) {
+            privacyMessage.value = "Your fingerprint or screen lock is needed to allow this."
+            return@launch
+        }
+        val now = dev.jarvis.agent.ConsentFeatures.decode(repo.current().claudeConsent)
+        val next = if (on) now + group else now - group
+        repo.setClaudeConsent(dev.jarvis.agent.ConsentFeatures.encode(next))
+        if (!on) {
+            val seen = dev.jarvis.agent.ConsentFeatures.decode(repo.current().consentPreviewed) - group
+            repo.setConsentPreviewed(dev.jarvis.agent.ConsentFeatures.encode(seen))
+        }
+        privacyMessage.value = null
+        audit.record(AuditEvent(AuditCategory.DATA, "consent_setting", if (on) "on" else "off", detail = group.name))
+    }
 
     // ---- Messaging (CLAUDE.md section 7) ----
     val sentLog: StateFlow<List<dev.jarvis.data.db.SentMessageEntity>> =

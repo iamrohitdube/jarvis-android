@@ -245,6 +245,25 @@ object AppModule {
     )
 
     @Provides @Singleton
+    fun consentCoordinator() = dev.jarvis.agent.ConsentCoordinator()
+
+    /** Consent for the on-screen agent: the first send of each feature is previewed in a dialog. */
+    @Provides @Singleton
+    fun consentGate(settings: SettingsRepository, coordinator: dev.jarvis.agent.ConsentCoordinator): dev.jarvis.agent.ConsentGate =
+        object : dev.jarvis.agent.ConsentGate {
+            override suspend fun allowed(group: dev.jarvis.agent.ToolGroup) =
+                group in dev.jarvis.agent.ConsentFeatures.decode(settings.current().claudeConsent)
+
+            override suspend fun confirmFirstSend(group: dev.jarvis.agent.ToolGroup, preview: String): Boolean {
+                val seen = dev.jarvis.agent.ConsentFeatures.decode(settings.current().consentPreviewed)
+                if (group in seen) return true
+                if (!coordinator.ask(group, preview)) return false
+                settings.setConsentPreviewed(dev.jarvis.agent.ConsentFeatures.encode(seen + group))
+                return true
+            }
+        }
+
+    @Provides @Singleton
     fun connectors(
         indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
         calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
@@ -369,12 +388,15 @@ object AppModule {
         audit: AuditLog,
         @ApplicationContext c: Context,
         messenger: dev.jarvis.messaging.Messenger,
+        consent: dev.jarvis.agent.ConsentGate,
     ) = AgentLoop(
         llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
         requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) }, debugLog = shapeLog,
         recipes = ClaudeRecipeWriter(llm),
         // Only the on-screen agent can send: the confirmation needs the screen (hands-free sending is off for now).
         sendMessage = { input -> messenger.handle(input) },
+        // Consent sends need the preview dialog, so only the on-screen agent has them.
+        consent = consent,
     )
 
     /** Debug builds only: result shapes (field names, never values) for writing on-phone templates. */

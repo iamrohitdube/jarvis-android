@@ -64,6 +64,12 @@ data class AppSettings(
     /** Trusted contacts, comma separated: only they can be approved by saying "send it". */
     val trustedContacts: String = "",
     val maxMessagesPerHour: Int = 20,
+    /** Blocks every personal-data read (D29 step 6). */
+    val privateMode: Boolean = false,
+    /** Features whose data may go to Claude, redacted (ToolGroup names). Default: none. */
+    val claudeConsent: String = "",
+    /** Features whose first redacted send the user has already previewed and approved. */
+    val consentPreviewed: String = "",
     /** Always-on "Hey Jarvis" listening (foreground service). Off by default. */
     val wakeWordEnabled: Boolean = false,
     val wakeSensitivity: WakeSensitivity = WakeSensitivity.NORMAL,
@@ -118,6 +124,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             sendingEnabled = p[SENDING_ENABLED] ?: true,
             trustedContacts = p[TRUSTED_CONTACTS] ?: "",
             maxMessagesPerHour = p[MAX_PER_HOUR] ?: 20,
+            privateMode = p[PRIVATE_MODE] ?: false,
+            claudeConsent = p[CLAUDE_CONSENT] ?: "",
+            consentPreviewed = p[CONSENT_PREVIEWED] ?: "",
             wakeWordEnabled = p[WAKE_WORD] ?: false,
             wakeSensitivity = p[WAKE_SENSITIVITY]?.let { runCatching { WakeSensitivity.valueOf(it) }.getOrNull() } ?: WakeSensitivity.NORMAL,
             wakeMicSource = p[WAKE_MIC]?.let { runCatching { MicSource.valueOf(it) }.getOrNull() } ?: MicSource.STANDARD,
@@ -157,6 +166,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setTrustUnlockedPhone(v: Boolean) = store.edit { it[TRUST_UNLOCKED] = v }
     suspend fun setSendingEnabled(v: Boolean) = store.edit { it[SENDING_ENABLED] = v }
     suspend fun setTrustedContacts(v: String) = store.edit { it[TRUSTED_CONTACTS] = v.take(1000) }
+    suspend fun setPrivateMode(v: Boolean) = store.edit { it[PRIVATE_MODE] = v }
+    suspend fun setClaudeConsent(v: String) = store.edit { it[CLAUDE_CONSENT] = v; if (v.isEmpty()) it[CONSENT_PREVIEWED] = "" }
+    suspend fun setConsentPreviewed(v: String) = store.edit { it[CONSENT_PREVIEWED] = v }
     suspend fun setWakeWordEnabled(v: Boolean) = store.edit { it[WAKE_WORD] = v }
     suspend fun setWakeSensitivity(v: WakeSensitivity) = store.edit { it[WAKE_SENSITIVITY] = v.name }
     suspend fun setWakeMicSource(v: MicSource) = store.edit { it[WAKE_MIC] = v.name }
@@ -186,6 +198,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val SENDING_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("sending_enabled")
         val TRUSTED_CONTACTS = stringPreferencesKey("trusted_contacts")
         val MAX_PER_HOUR = intPreferencesKey("max_messages_per_hour")
+        val PRIVATE_MODE = androidx.datastore.preferences.core.booleanPreferencesKey("private_mode")
+        val CLAUDE_CONSENT = stringPreferencesKey("claude_consent")
+        val CONSENT_PREVIEWED = stringPreferencesKey("consent_previewed")
         val WAKE_WORD = booleanPreferencesKey("wake_word_enabled")
         val WAKE_SENSITIVITY = stringPreferencesKey("wake_sensitivity")
         val WAKE_MIC = stringPreferencesKey("wake_mic_source")

@@ -244,6 +244,36 @@ fun DriveSection(vm: SettingsViewModel) {
     }
 }
 
+/** Privacy (D29 step 6): Private mode, and per-feature consent to send redacted data to Claude. */
+@Composable
+fun PrivacySection(vm: SettingsViewModel) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val message by vm.privacyMessage.collectAsStateWithLifecycle()
+    val settings = s ?: return
+    val allowed = dev.jarvis.agent.ConsentFeatures.decode(settings.claudeConsent)
+    SettingsCard("Privacy", AppIcons.Shield, subtitle = "What JARVIS may read, and what may go to Claude", tint = MaterialTheme.colorScheme.tertiary) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Private mode", style = MaterialTheme.typography.bodyLarge)
+                Hint("JARVIS reads none of your personal data (email, money, calendar, calls, messages) until you turn it off.")
+            }
+            androidx.compose.material3.Switch(checked = settings.privateMode, onCheckedChange = vm::setPrivateMode)
+        }
+        Text("Send to Claude (redacted)", style = MaterialTheme.typography.titleSmall)
+        Hint("Off (default): your data is answered on the phone and never sent. On: Claude can summarise and reason over that feature's data after the phone removes identifiers. The first time, you see exactly what would be sent.")
+        dev.jarvis.agent.ConsentFeatures.ALL.forEach { g ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(dev.jarvis.agent.ConsentFeatures.label(g), style = MaterialTheme.typography.bodyMedium)
+                    if (g in allowed) Hint(dev.jarvis.agent.ConsentFeatures.keeps(g))
+                }
+                androidx.compose.material3.Switch(checked = g in allowed, onCheckedChange = { vm.setConsent(g, it) })
+            }
+        }
+        StatusMessage(message, error = message != null)
+    }
+}
+
 /** Messaging (CLAUDE.md section 7): the off switch, trusted contacts, and the log of every send. */
 @Composable
 fun MessagingSection(vm: SettingsViewModel) {

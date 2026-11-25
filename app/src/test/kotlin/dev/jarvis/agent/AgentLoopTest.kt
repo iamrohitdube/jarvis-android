@@ -552,4 +552,53 @@ class AgentLoopTest {
         AgentLoop(llm, emptyMap(), meter, allowAll).run(emptyList(), "hi", settings).toList()
         assertFalse(llm.requests[0].body["tools"].toString().contains(SendMessageTool.NAME))
     }
+
+    // ---- Consent (D29 step 6) and Private mode ----
+
+    private class FakeConsent(val allowedGroups: Set<ToolGroup>, val approve: Boolean) : ConsentGate {
+        var previews = mutableListOf<String>()
+        override suspend fun allowed(group: ToolGroup) = group in allowedGroups
+        override suspend fun confirmFirstSend(group: ToolGroup, preview: String): Boolean { previews += preview; return approve }
+    }
+
+    @Test fun withConsentClaudeAnswersFromRedactedData() = runBlocking {
+        val consent = FakeConsent(setOf(ToolGroup.FINANCE), approve = true)
+        val llm = FakeLlm({ handoff("net_worth")() }, { reply("", content = listOf(block("""{"type":"text","text":"You're up 4% overall; card dues are small."}"""))) })
+        val agent = AgentLoop(llm, indmoney(portfolio()), meter, allowAll, consent = consent)
+        val done = agent.run(emptyList(), "am I doing ok", settings).toList().last() as AgentEvent.Finished
+        assertEquals("You're up 4% overall; card dues are small.", done.text)
+        assertTrue(done.personal)
+        val sentBody = llm.requests[1].body.toString()
+        assertTrue(sentBody.contains("total_networth")) // finance consent keeps amounts and structure
+        assertFalse("card digits are removed", sentBody.contains("4321") || sentBody.contains("8765"))
+        assertEquals(sentBody.contains("[account]"), true)
+        assertEquals(1, consent.previews.size) // the user saw exactly what was sent
+        assertTrue(meter.entries.first().any { it.mode == "consent" })
+    }
+
+    @Test fun declinedPreviewKeepsTheAnswerOnThePhone() = runBlocking {
+        val consent = FakeConsent(setOf(ToolGroup.FINANCE), approve = false)
+        val llm = FakeLlm({ handoff("net_worth")() })
+        val agent = AgentLoop(llm, indmoney(portfolio()), meter, allowAll, consent = consent)
+        val done = agent.run(emptyList(), "what's my net worth", settings).toList().last() as AgentEvent.Finished
+        assertTrue(done.text, done.text.startsWith("Net worth is"))
+        assertEquals(1, llm.requests.size) // nothing personal was sent
+    }
+
+    @Test fun withoutConsentNothingIsSent() = runBlocking {
+        val consent = FakeConsent(emptySet(), approve = true)
+        val llm = FakeLlm({ handoff("net_worth")() })
+        AgentLoop(llm, indmoney(portfolio()), meter, allowAll, consent = consent).run(emptyList(), "net worth", settings).toList()
+        assertEquals(1, llm.requests.size)
+        assertTrue(consent.previews.isEmpty())
+    }
+
+    @Test fun privateModeReadsNothing() = runBlocking {
+        val connector = portfolio()
+        val llm = FakeLlm({ handoff("net_worth")() })
+        val done = AgentLoop(llm, indmoney(connector), meter, allowAll)
+            .run(emptyList(), "net worth", settings.copy(privateMode = true)).toList().last() as AgentEvent.Finished
+        assertTrue(done.text, done.text.startsWith("Private mode is on"))
+        assertTrue(connector.calls.isEmpty())
+    }
 }
