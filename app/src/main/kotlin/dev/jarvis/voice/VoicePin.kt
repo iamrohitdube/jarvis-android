@@ -21,6 +21,7 @@ import dev.jarvis.security.SpokenPin
 import dev.jarvis.security.StrongAuthProof
 import dev.jarvis.security.VoiceMatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -40,23 +41,21 @@ interface SpokenPinSource {
 }
 
 /**
- * On-device spoken PIN + voice match (CLAUDE.md section 6; docs/decisions.md D23).
- * Audio is captured by the app itself (never by a cloud recognizer), the same samples go to the speaker
- * model (voice match) and to Moonshine (digits), and nothing is stored except the voiceprint, which is an
- * embedding vector kept in the Keystore-encrypted [SecretStore]. Transcripts are never logged.
+ * On-device spoken PIN (CLAUDE.md section 6; D23, D33). Audio is captured by the app itself (never by a cloud
+ * recognizer) and turned into digits on the phone (the phone's on-device recognizer, then Moonshine). Nothing is
+ * stored; transcripts are never logged. Voice match was removed from the PIN path at the user's request (D33):
+ * the voiceprint code below stays only for the later messaging feature (CLAUDE.md section 7).
  */
 class VoicePinEngine(
     private val models: ModelDownloader,
     private val secrets: SecretStore,
     /** The microphone path picked in Settings (same as the wake word). */
     private val micSource: suspend () -> MicSource = { MicSource.STANDARD },
-    /** Whether a spoken PIN must also be the owner's voice (Security → Spoken PIN). */
-    private val requireVoiceMatch: suspend () -> Boolean = { true },
     /** A second opinion on the digits from the phone's on-device recognizer (better with accents); null = Moonshine only. */
     private val onDeviceRecognizer: (suspend (ShortArray) -> String?)? = null,
 ) : VoiceMatcher, SpokenPinSource {
 
-    override suspend fun ready(): Boolean = models.installed() && (!requireVoiceMatch() || isEnrolled())
+    override suspend fun ready(): Boolean = models.installed()
 
     override suspend fun isEnrolled(): Boolean = secrets.get(SecretKey.VOICE_PRINT) != null
 
@@ -80,16 +79,14 @@ class VoicePinEngine(
 
     override suspend fun remove(proof: StrongAuthProof) = secrets.remove(SecretKey.VOICE_PRINT)
 
+    /** Deletes a voiceprint left from the removed voice-match feature (D33). Deleting weakens nothing now. */
+    suspend fun forgetVoiceprint() = secrets.remove(SecretKey.VOICE_PRINT)
+
     override suspend fun capturePin(): SpokenPin {
-        val audio = record() ?: return SpokenPin(null, voiceMatched = true) // nothing heard: "didn't catch", no penalty
-        if (audio.size < MIN_SAMPLES) return SpokenPin(null, voiceMatched = true)
-        var score: Float? = null
-        if (requireVoiceMatch()) {
-            score = similarity(audio) ?: 0f
-            // A stranger's voice: don't even transcribe the PIN.
-            if (score < THRESHOLD) return SpokenPin(null, voiceMatched = false, similarity = score)
-        }
-        return SpokenPin(digitsOf(audio), voiceMatched = true, similarity = score)
+        // Skip the first moments so the tail of "Say your PIN." (speaker echo) can't start or end the recording.
+        val audio = record(maxMs = 8_000, settleMs = SETTLE_MS) ?: return SpokenPin(null, voiceMatched = true) // nothing heard: no penalty
+        if (audio.size < MIN_PIN_SAMPLES) return SpokenPin(null, voiceMatched = true)
+        return SpokenPin(digitsOf(audio), voiceMatched = true)
     }
 
     /**
@@ -98,7 +95,8 @@ class VoicePinEngine(
      */
     private suspend fun digitsOf(audio: FloatArray): String? {
         val pcm = ShortArray(audio.size) { (audio[it] * 32767f).toInt().coerceIn(-32768, 32767).toShort() }
-        val phone = onDeviceRecognizer?.let { runCatching { it(pcm) }.getOrNull() }?.let { PinSpeech.digits(it) }
+        val phone = onDeviceRecognizer?.let { r -> runCatching { withTimeoutOrNull(RECOGNIZER_TIMEOUT_MS) { r(pcm) } }.getOrNull() }
+            ?.let { PinSpeech.digits(it) }
         if (phone != null && phone.length in 4..8) return phone
         val moon = recognizeDigits(audio)
         return if (moon != null && moon.length in 4..8) moon else phone ?: moon
@@ -106,13 +104,13 @@ class VoicePinEngine(
 
     /** Records one utterance (for PIN or enrolment): starts when speech starts, ends after ~0.8 s of quiet. */
     @SuppressLint("MissingPermission") // callers only reach this after RECORD_AUDIO is granted
-    suspend fun record(maxMs: Long = 7_000): FloatArray? {
+    suspend fun record(maxMs: Long = 7_000, settleMs: Long = 0): FloatArray? {
         val source = micSource()
-        return recordWith(source, maxMs)
+        return recordWith(source, maxMs, settleMs)
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun recordWith(source: MicSource, maxMs: Long): FloatArray? = withContext(Dispatchers.IO) {
+    private suspend fun recordWith(source: MicSource, maxMs: Long, settleMs: Long): FloatArray? = withContext(Dispatchers.IO) {
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = AudioRecord(source.androidSource, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, CHUNK * 4))
@@ -121,11 +119,13 @@ class VoicePinEngine(
         try {
             rec.startRecording()
             val pcm = ShortArray(CHUNK)
-            val deadline = System.currentTimeMillis() + maxMs
+            val started = System.currentTimeMillis()
+            val deadline = started + maxMs
             var heard = false
             while (coroutineContext.isActive && System.currentTimeMillis() < deadline) {
                 val n = rec.read(pcm, 0, pcm.size)
                 if (n <= 0) continue
+                if (System.currentTimeMillis() - started < settleMs) continue
                 val r = gate.process(FloatArray(n) { pcm[it] / 32768f })
                 if (r.feed.isNotEmpty()) { heard = true; voiced += r.feed }
                 if (heard && r.closed) break
@@ -224,6 +224,12 @@ class VoicePinEngine(
         private const val CHUNK = 1_600
         /** At least ~1 s of voiced audio for a usable voiceprint. */
         const val MIN_SAMPLES = SAMPLE_RATE
+        /** A spoken PIN can be short ("one two three four"): ~0.4 s of voiced audio is enough for the digits. */
+        const val MIN_PIN_SAMPLES = SAMPLE_RATE * 2 / 5
+        /** Audio ignored at the start of a PIN recording (echo of "Say your PIN."). */
+        const val SETTLE_MS = 300L
+        /** The phone's recognizer sometimes never answers; Moonshine is tried after this. */
+        const val RECOGNIZER_TIMEOUT_MS = 4_000L
         /** Cosine similarity needed to accept the voice; sherpa-onnx examples use 0.5-0.6. Tune on the phone. */
         /**
          * Voice-match cut-off (cosine). sherpa-onnx examples use 0.5-0.6; 0.6 rejected the user's own voice on the
@@ -278,28 +284,51 @@ class VoicePinFlow(
     private val tts: Tts,
     private val auth: AuthCoordinator,
     private val settings: SettingsRepository,
+    /** Set while recording so the wake-word detector (and anything else) releases the microphone. */
     private val micBusy: MutableStateFlow<Boolean>? = null,
     private val maxTries: Int = 3,
 ) {
     private var lastPromptId = -1L
     private var tries = 0
+    private var explained = false
 
     suspend fun onPrompt(p: AuthPrompt?, voiceTurn: Boolean) {
-        if (p == null || p.stage == AuthPrompt.Stage.CHOOSE) { tries = 0; return }
+        if (p == null || p.stage == AuthPrompt.Stage.CHOOSE) { tries = 0; explained = false; return }
         if (p.stage != AuthPrompt.Stage.PIN || p.id == lastPromptId) return
         lastPromptId = p.id
-        if (!voiceTurn || tries >= maxTries || !settings.current().speakReplies || !source.ready()) return
+        if (!voiceTurn || !settings.current().speakReplies) return
+        if (!source.ready()) {
+            // Don't leave the user waiting in silence: say why, once.
+            if (!explained) { explained = true; tts.speak(NOT_SET_UP) }
+            return
+        }
+        if (tries >= maxTries) {
+            if (!explained) { explained = true; tts.speak(GIVE_UP) }
+            return
+        }
         tries++
-        tts.speak(if (tries == 1) SAY_PIN else (p.message ?: SAY_AGAIN))
-        withTimeoutOrNull(1_500) { tts.speaking.first { it } }  // started (skip if speech is off or failed)
-        withTimeoutOrNull(6_000) { tts.speaking.first { !it } } // finished
+        speakAndWait(if (tries == 1) SAY_PIN else (p.message ?: SAY_AGAIN))
         micBusy?.value = true
-        val result = try { source.capturePin() } finally { micBusy?.value = false }
+        val result = try {
+            delay(MIC_HANDOVER_MS) // let the detector or recognizer release the microphone
+            source.capturePin()
+        } finally {
+            micBusy?.value = false
+        }
         if (auth.prompt.value?.id == p.id) auth.submitSpokenPin(result)
+    }
+
+    private suspend fun speakAndWait(text: String) {
+        tts.speak(text)
+        withTimeoutOrNull(1_500) { tts.speaking.first { it } }  // started (skip if speech is off or failed)
+        withTimeoutOrNull(8_000) { tts.speaking.first { !it } } // finished
     }
 
     companion object {
         const val SAY_PIN = "Say your PIN."
         const val SAY_AGAIN = "Say it again."
+        const val NOT_SET_UP = "Spoken PIN isn't set up. Type your PIN, or use fingerprint."
+        const val GIVE_UP = "I couldn't get it. Type your PIN, or use fingerprint."
+        const val MIC_HANDOVER_MS = 250L
     }
 }

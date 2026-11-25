@@ -195,7 +195,6 @@ object AppModule {
         VoicePinEngine(
             models, secrets,
             micSource = { settings.current().wakeMicSource },
-            requireVoiceMatch = { settings.current().voiceMatchForPin },
             onDeviceRecognizer = { pcm -> stt.transcribeOnDeviceOnly(pcm) },
         )
 
@@ -221,6 +220,7 @@ object AppModule {
         access = HeadlessAccess(
             auth, sessions, { settings.current().security.sessions }, { device.deviceLocked() },
             spokenPinReady = { settings.current().speakReplies && voicePin.ready() && !pin.isLocked() },
+            trustUnlocked = { settings.current().trustUnlockedPhone },
         ),
         snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
         debugLog = shapeLog, recipes = ClaudeRecipeWriter(llm),
@@ -258,6 +258,7 @@ object AppModule {
         settings = { settings.current().security },
         sessions = sessions, pin = pin, biometric = biometric, audit = audit,
         notifier = AndroidLockoutNotifier(c),
+        deviceUnlocked = { !biometric.deviceLocked() },
     )
 
     @Provides @Singleton

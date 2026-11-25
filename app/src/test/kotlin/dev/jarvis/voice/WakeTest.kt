@@ -188,6 +188,15 @@ class HeadlessAccessTest {
         assertTrue(access.authorize(listOf(netWorth), null) is AccessResult.Granted)
         assertEquals(1, delegateCalls)
     }
+
+
+    @Test fun unlockedPhoneWithTrustReachesTheGateWithoutASession() = runBlocking {
+        val trusting = HeadlessAccess(delegate, sessions, { SessionPolicy() }, { locked }, trustUnlocked = { true })
+        assertTrue(trusting.authorize(listOf(netWorth), null) is AccessResult.Granted)
+        assertEquals(1, delegateCalls)
+        locked = true // pocket / lock screen: back to spoken PIN or the screen
+        assertEquals(DenyReason.NEEDS_SCREEN, (trusting.authorize(listOf(netWorth), null) as AccessResult.Denied).reason)
+    }
 }
 
 /** Each listen plays the next scripted session; after the script, the user says nothing. */

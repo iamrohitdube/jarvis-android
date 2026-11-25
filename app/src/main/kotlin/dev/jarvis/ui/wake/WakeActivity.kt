@@ -66,7 +66,7 @@ class WakeViewModel @Inject constructor(
 ) : ViewModel() {
     /** Question said together with the wake word, if any (passed by the listener). */
     private val preheard: String? = savedState[WakeActivity.EXTRA_QUESTION]
-    private val voicePin = dev.jarvis.voice.VoicePinFlow(recorder, tts, auth, settings)
+    private val voicePin = dev.jarvis.voice.VoicePinFlow(recorder, tts, auth, settings, bus.micBusy)
     private val conversation = VoiceConversation(stt, tts, agent, history, settings, cue, capture, transcriber) { device.deviceLocked() }
     val phase = conversation.phase
     val transcript = conversation.transcript

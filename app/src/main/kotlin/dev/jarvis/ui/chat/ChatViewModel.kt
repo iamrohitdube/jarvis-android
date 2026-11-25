@@ -104,7 +104,7 @@ class ChatViewModel @Inject constructor(
     val voiceError: StateFlow<SttError?> = voice.error
     val sttAvailable: Boolean = stt.isAvailable()
 
-    /** Spoken PIN + voice match in voice turns (typing still works). */
+    /** Spoken PIN in voice turns (typing still works). */
     private val voicePin = VoicePinFlow(voicePinEngine, tts, auth, settings, wakeBus.micBusy)
 
     /** Quiet mode = not speaking replies (screen only). */

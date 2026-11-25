@@ -48,6 +48,10 @@
   fills values; invented figures fall back to templates. Template fallback now lists the biggest asset classes.
   Chat: Copy button under replies, long-press copies your message, top-bar copies the whole chat (private replies
   flagged sensitive for the clipboard). **330 unit tests, 0 failures.** Needs device test.
+- D33 (2026-11-25): unlocked phone needs no PIN for personal/sensitive reads (setting, on by default; answers stay
+  on screen); voice match removed; spoken PIN fixes (mic hand-over, echo skip, shorter minimum, recognizer timeout,
+  forgiving digits, spoken explanations). **337 unit tests, 0 failures.** Needs device test: net worth with the
+  phone unlocked (no prompt), and the spoken PIN from the lock screen / pocket.
 - [ ] Step 4: Calendar (phone calendar via CalendarContract, user pick 2026-11-25), then Drive metadata
 - [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
   is the only brain; personal data still answered on the phone via `private_data` (D29 update).

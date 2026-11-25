@@ -661,3 +661,27 @@ reaches the user.
 - Rejected: sending totals to Claude (opt-in B); more templates (C).
 - Tests: placeholder engine on INDmoney's real structure (made-up numbers), outline leaks nothing, fallbacks, and
   an end-to-end check of the real request body.
+
+## D33: Unlocked phone needs no PIN; spoken PIN without voice match (user request), 2026-11-25
+**Unlocked phone.** New Security setting "No PIN while the phone is unlocked", on by default. While the phone is
+unlocked (keyguard passed), personal (Tier 1) and sensitive (Tier 2) READS are granted without "PIN or
+fingerprint?" (`AuthCoordinator.deviceUnlocked`, method `DEVICE_UNLOCK`, audited as `device_unlock`). Sensitive
+answers granted this way are shown on screen only, not spoken (the phone may be in a room with others). A locked
+phone (lock screen, pocket, hands-free) still needs PIN or fingerprint; Tier 3 actions are never covered; tool
+policy DENY still wins. Turning the setting on needs fingerprint or screen lock; turning it off doesn't.
+Trade-off: anyone holding the unlocked phone can ask about finances, as with the INDmoney app itself.
+
+**Voice match removed** from the spoken PIN (setting, enrolment, test screen); any stored voiceprint is deleted.
+It was off by default and wasn't why the spoken PIN failed. The voiceprint code stays for the messaging feature
+(CLAUDE.md section 7), which needs its own decision. Anyone who hears the PIN could say it, so the Security screen
+says to speak it only when alone.
+
+**Spoken PIN fixes** (the user reported it not working; diagnosed from code, no device logs):
+- the hands-free service and wake screen now pause the wake-word detector while recording the PIN (the chat screen
+  already did); a 250 ms hand-over and 300 ms settle skip the echo of "Say your PIN.";
+- 0.4 s of speech is enough (the 1 s minimum was for voice match);
+- the phone's recognizer gets 4 s before Moonshine is tried;
+- digits: lead-in words ("I said…") and polite endings ("…please") are ignored; junk inside the digits is still
+  "didn't catch" (no lockout penalty);
+- JARVIS now says why instead of staying silent: "Spoken PIN isn't set up…" (models missing) and, after 3 tries,
+  "I couldn't get it. Type your PIN, or use fingerprint."

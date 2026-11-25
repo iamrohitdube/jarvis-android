@@ -224,11 +224,14 @@ class HeadlessAccess(
     private val deviceLocked: () -> Boolean,
     /** Spoken PIN is set up and not locked out: then private questions can be unlocked by voice, without a screen. */
     private val spokenPinReady: suspend () -> Boolean = { false },
+    /** "Trust the unlocked phone" (D33): an unlocked phone needs no PIN for reads. */
+    private val trustUnlocked: suspend () -> Boolean = { false },
 ) : AccessController {
     override suspend fun authorize(tools: List<ToolSpec>, preferred: AuthMethod?): AccessResult {
         val tier = tools.requiredTier()
         if (tier >= AuthTier.PERSONAL) {
-            if (deviceLocked() || !sessions.isValid(tier, sessionPolicy())) {
+            val trusted = !deviceLocked() && tier <= AuthTier.SENSITIVE && trustUnlocked()
+            if (!trusted && (deviceLocked() || !sessions.isValid(tier, sessionPolicy()))) {
                 // No screen for a fingerprint: the only way in is the spoken PIN (the user's choice, 2026-11-21).
                 if (spokenPinReady()) return delegate.authorize(tools, AuthMethod.PIN)
                 return AccessResult.Denied(DenyReason.NEEDS_SCREEN, tools.filterNot { it.helper }.map { it.name })

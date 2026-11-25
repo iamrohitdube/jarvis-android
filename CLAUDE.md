@@ -84,9 +84,9 @@ Per-tool policy (declarative, user-editable): each tool is ALLOW, ASK (confirm),
 level: STRICT (ask for everything non-read), SMART (default: ask for writes and sensitive reads), AUTO
 (only for allowlisted tools), OFF is not offered. Policy lives in the Security module, not in prompts.
 
-Tier 2 flow (user chooses every time):
+Tier 2 flow (when the phone is locked, or "No PIN while the phone is unlocked" is off; D33):
 1. Assistant says neutrally: "That's sensitive. PIN or fingerprint?" (never reveal data in the prompt)
-2. "PIN" (user is alone): spoken PIN + voice match. Result spoken AND shown.
+2. "PIN" (user is alone): spoken PIN (no voice match, D33). Result spoken AND shown.
 3. "Fingerprint" (people nearby): BiometricPrompt. Result shown on SCREEN ONLY; assistant says only
    "Done, it's on your screen."
 4. No answer within ~6 s or unclear: default to fingerprint.
@@ -110,7 +110,8 @@ File guard: the assistant has no access to the app's key storage or other apps' 
 - Reading/summarising allowed (Tier 1). Sending only after voice confirmation:
   1. Speak channel, recipient, and the FULL draft.
   2. User must say a specific phrase ("send it"). A bare "yes" is not enough.
-  3. Recipients not on the trusted list require voice-match on the confirmation.
+  3. Recipients not on the trusted list need an extra check on the confirmation (voice match was removed in D33;
+     decide the check when messaging is built).
   4. 5-10 s send delay with "cancel" available. Silence/noise/unclear = do NOT send.
   5. If several contacts match, ask which BEFORE drafting.
 - Optional allowlist for automatic replies (specific contacts and canned types only; never money, legal,
@@ -313,7 +314,7 @@ no config files on the phone.
   explanation, and a button that opens the exact Android settings page where needed. Steps:
   1. Anthropic key (paste or scan QR) + spend-limit reminder + connection test.
   2. Voice: microphone permission, TTS/STT check, wake word key (if used) + test phrase.
-  3. Security: set PIN, enrol voice match (if enabled), confirm fingerprint available.
+  3. Security: set PIN, confirm fingerprint available.
   4. Connectors: INDmoney, Google (Gmail/Calendar/Drive) sign-in with a test call for each.
   5. Permissions: notifications, SMS, notification access, battery-optimisation exemption,
      default assistant role. Each with a "why" line and a re-check.

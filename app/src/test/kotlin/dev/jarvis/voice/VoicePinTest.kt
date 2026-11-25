@@ -46,6 +46,20 @@ class PinSpeechTest {
         assertEquals("1234", PinSpeech.digits("one to three for")) // common mishearings
     }
 
+    @Test fun leadInAndPoliteWordsAreIgnored() {
+        assertEquals("2580", PinSpeech.digits("I said two five eight zero"))
+        assertEquals("2580", PinSpeech.digits("so 2580 please"))
+        assertEquals("2580", PinSpeech.digits("Oh, my PIN is 2 5 8 0, thanks"))
+        assertEquals("0258", PinSpeech.digits("oh two five eight"))   // "oh" before a digit is zero
+        assertEquals("2580", PinSpeech.digits("okay it's 2580 that's it"))
+    }
+
+    @Test fun messyAnswersAreUnclearNotWrong() {
+        assertNull(PinSpeech.digits("two five banana eight zero")) // junk inside the digits
+        assertNull(PinSpeech.digits("show my last 4 transactions"))
+        assertNull(PinSpeech.digits("2580 and then some"))
+    }
+
     @Test fun anythingElseIsUnclear() {
         assertNull(PinSpeech.digits("what's my net worth"))
         assertNull(PinSpeech.digits("two five"))          // too short
@@ -109,15 +123,19 @@ class VoicePinFlowTest {
         collector.cancel()
     }
 
-    @Test fun staysQuietUntilSpokenPinIsSetUpOrOutsideVoiceTurns() = runTest {
+    @Test fun saysWhyWhenSpokenPinIsNotSetUpAndStaysQuietOutsideVoiceTurns() = runTest {
         val tts = InstantTts()
         val notReady = FakeSource(isReady = false, next = SpokenPin("2580", true))
         val prompt = AuthPrompt(1, AuthPrompt.Stage.PIN, dev.jarvis.agent.AuthTier.SENSITIVE, true, false, true)
-        VoicePinFlow(notReady, tts, auth, settings).onPrompt(prompt, voiceTurn = true)
+        val flow = VoicePinFlow(notReady, tts, auth, settings)
+        flow.onPrompt(prompt, voiceTurn = true)
+        flow.onPrompt(prompt.copy(id = 2), voiceTurn = true) // said once, not on every retry
+        assertEquals(listOf(VoicePinFlow.NOT_SET_UP), tts.spoken)
+        val quiet = InstantTts()
         val ready = FakeSource(isReady = true, next = SpokenPin("2580", true))
-        VoicePinFlow(ready, tts, auth, settings).onPrompt(prompt, voiceTurn = false)
+        VoicePinFlow(ready, quiet, auth, settings).onPrompt(prompt, voiceTurn = false)
         assertEquals(0, notReady.captures + ready.captures)
-        assertTrue(tts.spoken.isEmpty())
+        assertTrue(quiet.spoken.isEmpty())
     }
 
     @Test fun givesUpSpeakingAfterThreeTries() = runTest {
@@ -128,6 +146,6 @@ class VoicePinFlowTest {
             flow.onPrompt(AuthPrompt(id, AuthPrompt.Stage.PIN, dev.jarvis.agent.AuthTier.SENSITIVE, true, false, true), voiceTurn = true)
         }
         assertEquals(3, source.captures)
-        assertFalse(tts.spoken.isEmpty())
+        assertEquals(VoicePinFlow.GIVE_UP, tts.spoken.last()) // then tells the user to type it or use fingerprint
     }
 }
