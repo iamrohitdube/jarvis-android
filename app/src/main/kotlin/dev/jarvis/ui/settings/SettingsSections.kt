@@ -203,6 +203,49 @@ fun GmailSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
     }
 }
 
+/** Phone data (D29/D30): each source is read on the phone with an Android permission; nothing leaves the phone. */
+@Composable
+fun PhoneDataSection(vm: SettingsViewModel) {
+    val status by vm.localStatus.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var denied by remember { mutableStateOf<String?>(null) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        vm.refreshLocalSources()
+        denied = if (result.values.any { !it }) "Not allowed. If Android doesn't ask again, open JARVIS's app settings → Permissions." else null
+    }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { vm.refreshLocalSources(); onPauseOrDispose { } }
+    SettingsCard(
+        "Phone data", AppIcons.Storage,
+        subtitle = "Read on the phone and answered on the phone; never sent to Claude",
+        tint = MaterialTheme.colorScheme.secondary,
+    ) {
+        vm.localSources.forEach { source ->
+            val ok = status[source.id] == ConnectorStatus.Connected
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(source.displayName, style = MaterialTheme.typography.bodyLarge)
+                    Hint(source.purpose)
+                }
+                if (ok) StatusChip("Allowed", ChipTone.GOOD)
+                else OutlinedButton(onClick = { launcher.launch(source.permissions.toTypedArray()) }) { Text("Allow") }
+            }
+        }
+        denied?.let {
+            StatusMessage(it, error = true)
+            TextButton(onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(android.net.Uri.fromParts("package", context.packageName, null)),
+                    )
+                }
+            }) { Text("Open app settings") }
+        }
+    }
+}
+
 private fun openCustomTab(context: Context, url: String) {
     CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, url.toUri())
 }

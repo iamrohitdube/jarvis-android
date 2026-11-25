@@ -249,9 +249,9 @@ object Recipe {
         else -> if (v == Math.floor(v) && abs(v) < 1e15) v.toLong().toString() else trim(String.format(Locale.ENGLISH, "%.2f", v))
     }
 
-    private fun date(s: String): String = runCatching {
-        LocalDate.parse(s.take(10)).format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH))
-    }.getOrDefault(s)
+    private fun date(s: String): String =
+        runCatching { java.time.LocalDateTime.parse(s.take(16)).format(DateTimeFormatter.ofPattern("EEE d MMM, h:mm a", Locale.ENGLISH)) }.getOrNull()
+            ?: runCatching { LocalDate.parse(s.take(10)).format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)) }.getOrDefault(s)
 
     private fun trim(s: String) = if (s.contains('.')) s.trimEnd('0').trimEnd('.') else s
 }

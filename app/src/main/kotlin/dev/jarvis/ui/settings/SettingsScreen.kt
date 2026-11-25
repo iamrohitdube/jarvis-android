@@ -100,6 +100,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSecurity: () -> Unit, vm: SettingsV
             SectionLabel("Connectors")
             ConnectorsSection(vm)
             GmailSection(vm)
+            PhoneDataSection(vm)
 
             settings?.let {
                 SectionLabel("Intelligence")

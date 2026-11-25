@@ -19,6 +19,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- After a reboot: post a "tap to resume listening" notification (the mic cannot start by itself). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Phone data (D29/D30), read-only and answered on the phone; each is asked for in Settings → Phone data. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
 
     <!-- Lets the app find a browser that supports Custom Tabs for OAuth sign-in (package visibility). -->
     <queries>

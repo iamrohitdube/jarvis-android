@@ -39,6 +39,7 @@ class SettingsViewModel @Inject constructor(
     private val secrets: SecretStore,
     private val llm: LlmClient,
     private val indMoney: IndMoneyConnector,
+    private val connectors: Map<String, @JvmSuppressWildcards dev.jarvis.connectors.Connector>,
     private val gmail: dev.jarvis.connectors.google.GmailConnector,
     private val google: dev.jarvis.connectors.google.GoogleAuthorizer,
     private val signInEvents: SignInEvents,
@@ -336,6 +337,16 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val indMoneyStatus: StateFlow<ConnectorStatus> = indMoney.status
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
+
+    /** Phone-data sources (calendar, call log, SMS…) and whether access is granted. */
+    val localSources: List<dev.jarvis.connectors.phone.LocalConnector> =
+        connectors.values.filterIsInstance<dev.jarvis.connectors.phone.LocalConnector>().sortedBy { it.displayName }
+    val localStatus: StateFlow<Map<String, ConnectorStatus>> =
+        kotlinx.coroutines.flow.combine(localSources.map { s -> s.status.map { s.id to it } }) { it.toMap() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** After a permission dialog (or returning from Android settings). */
+    fun refreshLocalSources() = localSources.forEach { it.refreshStatus() }
 
     val gmailStatus: StateFlow<ConnectorStatus> = gmail.status
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)

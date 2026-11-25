@@ -42,6 +42,10 @@ data class ToolSpec(
 object ToolRegistry {
     const val INDMONEY = "indmoney"
     const val GMAIL = "gmail"
+    const val CALENDAR = "calendar"
+
+    /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
+    val LOCAL_SOURCES = setOf(CALENDAR, "calls", "recordings", "sms", "notifications")
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
@@ -74,6 +78,11 @@ object ToolRegistry {
         gmail("gmail_recent", "Latest inbox emails (sender, subject, time)",
             listOf("my email", "my emails", "my inbox", "latest email", "recent email", "last email"), groupDefault = true, snapshot = true),
         gmail("gmail_search", "Emails matching a sender or topic", listOf("email from", "emails from", "mail from", "mails from"), itemArg = "query"),
+        // Calendar (D29 step 4): the phone's own calendar provider, read-only. Tier 1.
+        local(CALENDAR, ToolGroup.CALENDAR, "calendar_today", "Today's events", listOf("today's meetings", "meetings today", "on my calendar today", "my day today", "schedule today"), snapshot = true),
+        local(CALENDAR, ToolGroup.CALENDAR, "calendar_upcoming", "Events in the next 7 days, next event first",
+            listOf("next meeting", "my calendar", "my schedule", "upcoming", "this week", "tomorrow's meetings"), groupDefault = true, snapshot = true),
+        local(CALENDAR, ToolGroup.CALENDAR, "calendar_search", "Events matching a title or place", listOf("when is my", "when's my"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
@@ -85,6 +94,7 @@ object ToolRegistry {
             "portfolio", "net worth", "networth",
         ),
         ToolGroup.EMAIL to listOf("gmail", "my email", "my emails", "my inbox", "my mail"),
+        ToolGroup.CALENDAR to listOf("my calendar", "my schedule", "my meetings", "my agenda"),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }
@@ -99,6 +109,16 @@ object ToolRegistry {
         name = name, description = description, group = ToolGroup.FINANCE, risk = RiskLevel.READ, tier = tier,
         confirmationRequired = false, connectorId = INDMONEY, keywords = keywords,
         groupDefault = groupDefault, helper = helper, snapshot = snapshot,
+    )
+
+    /** A phone-data tool (calendar, call log, SMS…): read-only, Tier 1. */
+    internal fun local(
+        connector: String, group: ToolGroup, name: String, description: String, keywords: List<String>,
+        groupDefault: Boolean = false, snapshot: Boolean = false, itemArg: String? = null, tier: AuthTier = AuthTier.PERSONAL,
+    ) = ToolSpec(
+        name = name, description = description, group = group, risk = RiskLevel.READ, tier = tier,
+        confirmationRequired = false, connectorId = connector, keywords = keywords,
+        groupDefault = groupDefault, snapshot = snapshot, itemArg = itemArg,
     )
 
     private fun gmail(

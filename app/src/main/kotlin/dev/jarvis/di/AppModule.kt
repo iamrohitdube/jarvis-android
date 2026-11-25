@@ -156,8 +156,20 @@ object AppModule {
         )
 
     @Provides @Singleton
-    fun connectors(indMoney: IndMoneyConnector, gmail: GmailConnector): Map<String, @JvmSuppressWildcards Connector> =
-        mapOf(indMoney.id to indMoney, gmail.id to gmail)
+    fun calendar(@ApplicationContext c: Context, json: Json) = dev.jarvis.connectors.phone.CalendarConnector(
+        dev.jarvis.connectors.phone.AndroidCalendarSource(c.contentResolver), json,
+        granted = { hasPermissions(c, dev.jarvis.connectors.phone.CalendarConnector.PERMISSIONS) },
+    )
+
+    @Provides @Singleton
+    fun connectors(
+        indMoney: IndMoneyConnector, gmail: GmailConnector, calendar: dev.jarvis.connectors.phone.CalendarConnector,
+    ): Map<String, @JvmSuppressWildcards Connector> =
+        listOf<Connector>(indMoney, gmail, calendar).associateBy { it.id }
+
+    private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
+        androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
 
     @Provides @Singleton
     fun sessionManager() = SessionManager()
