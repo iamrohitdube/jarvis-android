@@ -40,10 +40,19 @@ object FinanceAnswers {
 
     // --- Templates ---------------------------------------------------------------------------------------
 
+    /**
+     * "Net worth is ₹12.3 lakh. Invested ₹10 lakh, up ₹2.3 lakh (23%). Biggest: Equity ₹6 lakh, Liquid ₹2 lakh."
+     * The total is an explicit net worth/total field, else the sum of the asset-class rows.
+     */
     private fun netWorth(root: JsonElement): String? {
-        val total = findNumber(root, NET_WORTH_KEYS) ?: return null
+        val classes = assetClasses(root)
+        val total = findNumber(root, NET_WORTH_KEYS, fuzzy = false)
+            ?: classes.takeIf { it.isNotEmpty() }?.sumOf { it.value }
+            ?: findNumber(root, NET_WORTH_KEYS)
+            ?: return null
         val invested = findNumber(root, INVESTED_KEYS)
-        val gain = findNumber(root, GAIN_KEYS) ?: invested?.let { totalCurrent(root, total) - it }
+            ?: classes.mapNotNull { it.invested }.takeIf { it.isNotEmpty() && it.size == classes.size }?.sum()
+        val gain = findNumber(root, GAIN_KEYS, fuzzy = false) ?: invested?.let { totalCurrent(root, total) - it }
         return buildString {
             append("Net worth is ").append(inr(total)).append('.')
             if (invested != null && invested > 0) {
@@ -52,19 +61,41 @@ object FinanceAnswers {
                     .append(" (").append(pct(gain / invested)).append(")")
                 append('.')
             }
+            val biggest = classes.filter { it.value > 0 }.sortedByDescending { it.value }.take(3)
+            if (biggest.size > 1) append(" Biggest: ").append(biggest.joinToString(", ") { "${it.label} ${inr(it.value)}" }).append('.')
         }
     }
 
     /**
-     * Bank/savings money from the net worth summary. Looks for a bank/savings/cash field, or a bank/cash row in an
-     * allocation list. If INDmoney doesn't report one, says so plainly and gives the net worth instead of guessing.
+     * Bank/savings money from the net worth summary: a bank/savings/cash field, or the bank-like asset classes
+     * (INDmoney's "Liquid" class covers bank, savings, cash and deposits). If none is reported, says so plainly and
+     * gives the net worth instead of guessing.
      */
     private fun bank(root: JsonElement): String {
         findNumber(root, BANK_KEYS, fuzzy = false)?.let { return "Bank and savings balance is ${inr(it)}." }
+        val rows = assetClasses(root).filter { BANK_LABEL.containsMatchIn(it.label.lowercase(Locale.ENGLISH)) }
+        if (rows.isNotEmpty()) {
+            val parts = rows.joinToString(", ") { "${it.label} ${inr(it.value)}" }
+            val note = if (rows.any { "liquid" in it.label.lowercase(Locale.ENGLISH) }) " (INDmoney's Liquid covers bank, savings, cash and deposits)" else ""
+            return if (rows.size == 1) "${rows[0].label}: ${inr(rows[0].value)}$note."
+            else "Bank and cash: ${inr(rows.sumOf { it.value })} ($parts)$note."
+        }
         bankRow(root)?.let { (label, value) -> return "$label: ${inr(value)}." }
         findNumber(root, BANK_FUZZY)?.let { return "Bank and savings balance is ${inr(it)}." }
         val total = netWorth(root)
-        return "INDmoney doesn't show a separate bank balance." + (total?.let { " $it" } ?: "")
+        return "INDmoney doesn't show bank or cash money separately." + (total?.let { " $it" } ?: "")
+    }
+
+    private data class AssetClass(val label: String, val value: Double, val invested: Double?)
+
+    /** Asset-class rows (label + current value) from the summary's allocation list, if it has one. */
+    private fun assetClasses(root: JsonElement): List<AssetClass> {
+        val rows = largestObjectArray(root) ?: return emptyList()
+        return rows.mapNotNull { o ->
+            val label = findString(o, CLASS_KEYS) ?: return@mapNotNull null
+            val value = findNumber(o, VALUE_KEYS, fuzzy = false) ?: findNumber(o, CLASS_VALUE_FUZZY) ?: return@mapNotNull null
+            AssetClass(assetLabel(label), value, findNumber(o, INVESTED_KEYS, fuzzy = false))
+        }
     }
 
     /** A row like {"asset_type":"Bank Balance","value":52000} in any list. */
@@ -166,17 +197,68 @@ object FinanceAnswers {
             if (lines.isNotEmpty()) return "Here's what INDmoney returned:\n" + lines.joinToString("\n")
         }
         val text = raw.trim()
-        return if (text.isEmpty()) "INDmoney returned nothing." else "Here's what INDmoney returned:\n" + text.take(600)
+        return when {
+            text.isEmpty() -> "INDmoney returned nothing."
+            // A plain sentence from INDmoney is readable as it is.
+            root == null || root is JsonPrimitive -> "Here's what INDmoney returned:\n" + text.take(600)
+            // Never dump raw JSON at the user.
+            else -> "I got your INDmoney data but couldn't read its format yet. Settings → Data on this phone → " +
+                "Copy data format shows its structure (no amounts) so the reader can be fixed."
+        }
     }
 
     // --- JSON helpers --------------------------------------------------------------------------------------
 
     private data class Row(val name: String, val value: Double?, val pnlPct: Double?)
 
-    private fun parse(raw: String): JsonElement? = runCatching { json.parseToJsonElement(raw.trim()) }.getOrNull()
-        ?.let { e -> // a JSON string holding JSON (some servers double-encode)
+    /**
+     * The result as JSON: plain JSON, a JSON string holding JSON (double-encoded), or JSON wrapped in text
+     * ("Here is your portfolio: {...}" or a ```json fence), in which case the outermost {...} or [...] is used.
+     */
+    internal fun parse(raw: String): JsonElement? {
+        val text = raw.trim()
+        val direct = runCatching { json.parseToJsonElement(text) }.getOrNull()?.let { e ->
             if (e is JsonPrimitive && e.isString) runCatching { json.parseToJsonElement(e.content) }.getOrNull() ?: e else e
+        }?.let(::unwrap)
+        if (direct != null && direct !is JsonPrimitive) return direct
+        val start = text.indexOfFirst { it == '{' || it == '[' }
+        val end = text.indexOfLast { it == '}' || it == ']' }
+        if (start >= 0 && end > start) runCatching { json.parseToJsonElement(text.substring(start, end + 1)) }.getOrNull()?.let { return it }
+        return direct
+    }
+
+    /**
+     * INDmoney wraps its data as text inside an envelope: {"result": "{\"total_networth\": ...}"}. When an object holds
+     * only plain values and one of them is a JSON object/array written as text, that inner JSON is the real data.
+     */
+    private fun unwrap(e: JsonElement): JsonElement {
+        if (e !is JsonObject || e.values.any { it !is JsonPrimitive }) return e
+        val inner = e.values.firstNotNullOfOrNull { v ->
+            (v as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
+                ?.takeIf { it.startsWith("{") || it.startsWith("[") }
+                ?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() }
         }
+        return if (inner != null && inner !is JsonPrimitive) inner else e
+    }
+
+    /** "US_STOCK" -> "US stocks", "EPF" -> "EPF", "mutual funds" -> "Mutual funds". */
+    internal fun assetLabel(raw: String): String {
+        val key = raw.trim().uppercase(Locale.ENGLISH).replace(Regex("[^A-Z0-9]+"), "_").trim('_')
+        ASSET_NAMES[key]?.let { return it }
+        val words = raw.trim().replace('_', ' ').replace(Regex("\\s+"), " ")
+        // Short all-caps codes (EPF, PPF, NPS, ETF) stay as they are.
+        if (words.length <= 4 && words.all { it.isUpperCase() || it.isDigit() }) return words
+        return words.lowercase(Locale.ENGLISH).replaceFirstChar { it.titlecase(Locale.ENGLISH) }
+    }
+
+    private val ASSET_NAMES = mapOf(
+        "US_STOCK" to "US stocks", "US_STOCKS" to "US stocks", "IND_STOCK" to "Indian stocks", "IND_STOCKS" to "Indian stocks",
+        "INDIAN_STOCK" to "Indian stocks", "INDIAN_STOCKS" to "Indian stocks", "STOCK" to "Stocks", "STOCKS" to "Stocks",
+        "MF" to "Mutual funds", "MUTUAL_FUND" to "Mutual funds", "MUTUAL_FUNDS" to "Mutual funds", "FD" to "Fixed deposits",
+        "FIXED_DEPOSIT" to "Fixed deposits", "LIQUID" to "Liquid", "BANK" to "Bank", "BANK_BALANCE" to "Bank balance",
+        "GOLD" to "Gold", "DIGITAL_GOLD" to "Digital gold", "CRYPTO" to "Crypto", "REAL_ESTATE" to "Real estate",
+        "BONDS" to "Bonds", "BOND" to "Bonds", "INSURANCE" to "Insurance", "OTHERS" to "Others", "OTHER" to "Others",
+    )
 
     internal fun norm(key: String) = key.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9]"), "")
 
@@ -290,9 +372,17 @@ object FinanceAnswers {
     private val PNL_PCT_KEYS = listOf("pnlpercent", "pnlpct", "returnspercent", "returnpercent", "gainpercent", "xirr", "returns")
     private val SIP_AMOUNT_KEYS = listOf("sipamount", "amount", "installmentamount", "monthlyamount", "value")
     private val DATE_KEYS = listOf("nextsipdate", "nextinstallmentdate", "nextdate", "nextduedate", "sipdate", "date")
-    private val BANK_KEYS = listOf("bankbalance", "savingsbalance", "savingsaccount", "bankaccounts", "bank", "savings", "cash", "cashbalance")
-    private val BANK_FUZZY = listOf("bankbalance", "savings", "bank")
-    private val BANK_LABEL = Regex("bank|savings|cash")
+    private val BANK_KEYS = listOf(
+        "bankbalance", "savingsbalance", "savingsaccount", "bankaccounts", "bank", "savings", "cash", "cashbalance",
+        "liquid", "liquidassets",
+    )
+    private val BANK_FUZZY = listOf("bankbalance", "savings", "bank", "liquid")
+    private val BANK_LABEL = Regex("bank|savings|cash|liquid|deposit|\\bfds?\\b")
+    /** The label of an asset-class row. */
+    private val CLASS_KEYS = listOf(
+        "assetclass", "assettype", "assetcategory", "asset", "category", "type", "class", "name", "label", "title", "displayname",
+    )
+    private val CLASS_VALUE_FUZZY = listOf("currentvalue", "value", "amount", "networth", "total")
     private const val TOP_N = 5
 }
 
@@ -301,18 +391,33 @@ object FinanceAnswers {
  * written against the real INDmoney output without logging personal data.
  */
 object JsonShape {
-    fun describe(raw: String, maxDepth: Int = 4): String {
-        val e = runCatching { Json.parseToJsonElement(raw.trim()) }.getOrNull()
+    /**
+     * [labels]: also show short string values of category-like keys (type, class, category, label, name), e.g. asset
+     * class names like "Liquid". Never numbers. Used only for the net worth summary, whose rows are asset classes;
+     * the user sees the text before sharing it.
+     */
+    fun describe(raw: String, maxDepth: Int = 4, labels: Boolean = false): String {
+        val e = FinanceAnswers.parse(raw)
         // Plain text (even a single word, which parses as a literal) is reported by length only.
         if (e == null || e is JsonPrimitive) return "text(${raw.length} chars)"
-        return describe(e, maxDepth)
+        val wrapped = if (runCatching { Json.parseToJsonElement(raw.trim()) }.isFailure) "text-wrapped " else ""
+        return wrapped + describe(e, maxDepth, labels)
     }
 
-    fun describe(e: JsonElement, depth: Int): String = when (e) {
-        is JsonObject -> if (depth <= 0) "{…}" else e.entries.joinToString(",", "{", "}") { (k, v) -> k + ":" + describe(v, depth - 1) }
-        is JsonArray -> if (e.isEmpty()) "[]" else "[" + describe(e.first(), depth - 1) + "]×" + e.size
+    private val LABEL_KEY = Regex("type|class|category|label|bucket|segment|name|title")
+
+    fun describe(e: JsonElement, depth: Int, labels: Boolean = false, key: String = ""): String = when (e) {
+        is JsonObject -> if (depth <= 0) "{…}" else e.entries.joinToString(",", "{", "}") { (k, v) -> k + ":" + describe(v, depth - 1, labels, k) }
+        is JsonArray -> when {
+            e.isEmpty() -> "[]"
+            // Category lists (asset classes) show every row's label; anything else shows the first row's shape.
+            labels && e.all { it is JsonObject } -> "[" + e.joinToString(" | ") { describe(it, depth - 1, labels) } + "]×" + e.size
+            else -> "[" + describe(e.first(), depth - 1, labels) + "]×" + e.size
+        }
         is JsonNull -> "null"
         is JsonPrimitive -> when {
+            e.isString && labels && LABEL_KEY.containsMatchIn(key.lowercase(Locale.ENGLISH)) && e.content.length <= 32 ->
+                "str(\"" + e.content + "\")"
             e.isString -> "str"
             e.contentOrNull == "true" || e.contentOrNull == "false" -> "bool"
             else -> "num"

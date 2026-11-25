@@ -26,6 +26,7 @@ import dev.jarvis.ui.SignInEvents
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -450,6 +451,24 @@ class SettingsViewModel @Inject constructor(
         if (v == null || v < 0) { dataMessage.value = "Enter minutes as a whole number (0 = always live)."; return@launch }
         repo.setSnapshotMaxAgeMinutes(v)
         dataMessage.value = if (v == 0) "Portfolio data will always be fetched live." else "Saved portfolio data will be reused for $v min."
+    }
+
+    /**
+     * The STRUCTURE of the saved INDmoney replies (field names and types, plus asset-class names for the net worth
+     * summary; never amounts), so the on-phone reader can be fitted to INDmoney's undocumented format.
+     */
+    fun copyDataFormat(copy: (String) -> Unit) = viewModelScope.launch {
+        val saved = snapshots.all.first().filter { it.connectorId == dev.jarvis.agent.ToolRegistry.INDMONEY }
+        if (saved.isEmpty()) {
+            dataMessage.value = "No saved INDmoney data yet. Ask \"what's my net worth?\" first."
+            return@launch
+        }
+        val text = "JARVIS data format (names and types only, no amounts)\n" + saved.joinToString("\n\n") { s ->
+            s.tool + ": " + dev.jarvis.agent.JsonShape.describe(s.content, maxDepth = 6, labels = s.tool == "networth_snapshot")
+        }
+        copy(text)
+        audit.record(AuditEvent(AuditCategory.DATA, "copy_data_format", "ok"))
+        dataMessage.value = "Copied the data format (no amounts). Paste it in your chat with the developer."
     }
 
     fun clearSnapshots() = viewModelScope.launch {

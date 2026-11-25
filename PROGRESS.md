@@ -38,6 +38,11 @@
   - **Triage added (2026-11-25, D29 "Email triage"):** important emails first (security, bills with amount and due
     date, government, people, jobs, bank, travel, orders); newsletters/social/promos only counted. Bank mail no
     longer hidden by default (OTPs still are). **310 unit tests, 0 failures.** Needs a device check with the real inbox.
+- INDmoney answers fixed (2026-11-25): the device showed INDmoney wraps its data as JSON text inside {"result": "..."}
+  (total_networth, total_invested, total_current_value, investments[asset_type, invested_value, current_value,
+  return, return_percentage]). The reader unwraps it; net worth = total, invested, gain, 3 biggest asset types;
+  bank questions use the Liquid asset type. Raw JSON is never shown. Settings → Data → "Copy data format (no
+  amounts)" for future format checks without adb. **318 unit tests, 0 failures.**
 - [ ] Step 4: Calendar (phone calendar via CalendarContract, user pick 2026-11-25), then Drive metadata
 - [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
   is the only brain; personal data still answered on the phone via `private_data` (D29 update).
