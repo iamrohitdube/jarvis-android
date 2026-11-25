@@ -43,6 +43,11 @@
   return, return_percentage]). The reader unwraps it; net worth = total, invested, gain, 3 biggest asset types;
   bank questions use the Liquid asset type. Raw JSON is never shown. Settings → Data → "Copy data format (no
   amounts)" for future format checks without adb. **318 unit tests, 0 failures.**
+- Recipe answers (D32, 2026-11-25): finance questions in any phrasing ("where am I bleeding money", "card dues",
+  "large vs small cap", "gold exposure") answered from Claude's placeholder recipe over the data outline; the phone
+  fills values; invented figures fall back to templates. Template fallback now lists the biggest asset classes.
+  Chat: Copy button under replies, long-press copies your message, top-bar copies the whole chat (private replies
+  flagged sensitive for the clipboard). **330 unit tests, 0 failures.** Needs device test.
 - [ ] Step 4: Calendar (phone calendar via CalendarContract, user pick 2026-11-25), then Drive metadata
 - [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
   is the only brain; personal data still answered on the phone via `private_data` (D29 update).

@@ -89,6 +89,9 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jarvis.claude.BudgetLevel
 import dev.jarvis.ui.common.FixAction
+import dev.jarvis.ui.common.chatTranscript
+import dev.jarvis.ui.common.copyToClipboard
+import androidx.compose.foundation.combinedClickable
 import dev.jarvis.ui.components.GlassIconButton
 import dev.jarvis.ui.components.JarvisBackground
 import dev.jarvis.ui.components.glass
@@ -196,6 +199,16 @@ fun ChatScreen(
                         }
                     },
                     actions = {
+                        if (state.messages.any { !it.streaming && it.text.isNotBlank() }) {
+                            val copyContext = LocalContext.current
+                            GlassIconButton(AppIcons.ContentCopy, "Copy chat") {
+                                copyToClipboard(
+                                    copyContext, "JARVIS chat", chatTranscript(state.messages),
+                                    sensitive = state.messages.any { it.screenOnly },
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
                         GlassIconButton(
                             if (quiet) AppIcons.VolumeOff else AppIcons.VolumeUp,
                             if (quiet) "Quiet mode on: replies on screen only" else "Spoken replies on",
@@ -554,18 +567,23 @@ private fun HomeState(
     }
 }
 
+/** Your message. Long-press copies it. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun UserBubble(text: String) {
+    val context = LocalContext.current
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         val shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp)
         Surface(
             shape = shape,
             color = Color.Transparent,
-            modifier = Modifier.widthIn(max = 320.dp).glass(shape, tint = Brand.Cyan, strength = 1.6f),
+            modifier = Modifier.widthIn(max = 320.dp).glass(shape, tint = Brand.Cyan, strength = 1.6f)
+                .clip(shape)
+                .combinedClickable(onClickLabel = null, onLongClickLabel = "Copy", onLongClick = {
+                    copyToClipboard(context, "Your message", text, sensitive = false)
+                }, onClick = {}),
         ) {
-            SelectionContainer {
-                Text(text, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-            }
+            Text(text, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
         }
     }
 }
@@ -592,10 +610,27 @@ private fun AssistantMessage(msg: UiMessage, onUnlock: () -> Unit, onFix: (FixAc
                 }
                 msg.streaming -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(28.dp)) { TypingDots() }
             }
-            if (msg.dataLabel != null || (msg.screenOnly && !msg.hidden)) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val copyable = !msg.streaming && !msg.hidden && msg.text.isNotBlank()
+            if (msg.dataLabel != null || (msg.screenOnly && !msg.hidden) || copyable) {
+                val context = LocalContext.current
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
                     msg.dataLabel?.let { StatusChip(it, ChipTone.BRAND, AppIcons.Update) }
                     if (msg.screenOnly && !msg.hidden) StatusChip("Shown on screen only", ChipTone.NEUTRAL, AppIcons.VisibilityOff)
+                    if (copyable) {
+                        Surface(
+                            onClick = { copyToClipboard(context, "JARVIS reply", msg.text, sensitive = msg.screenOnly) },
+                            shape = CircleShape, color = Color.Transparent, modifier = Modifier.glass(CircleShape),
+                        ) {
+                            Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(AppIcons.ContentCopy, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Copy", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
             }
             msg.status?.let {

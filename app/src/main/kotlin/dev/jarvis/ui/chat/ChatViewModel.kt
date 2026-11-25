@@ -340,8 +340,13 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun toolLabel(name: String): String {
+        if (name == dev.jarvis.agent.AgentLoop.RECIPE_ACTIVITY) return "Working it out…"
         val spec = ToolRegistry.byName(name)
-        return if (spec?.connectorId == ToolRegistry.INDMONEY) "Checking INDmoney…" else "Using $name…"
+        return when (spec?.connectorId) {
+            ToolRegistry.INDMONEY -> "Checking INDmoney…"
+            ToolRegistry.GMAIL -> "Checking Gmail…"
+            else -> "Using $name…"
+        }
     }
 
     private companion object {

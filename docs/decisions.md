@@ -643,3 +643,21 @@ Ideas taken from open-source assistants (isair/jarvis knowledge-graph memory, pr
 heartbeat checklist). Ideas only; no code copied. OpenClaw's community skill store is not used (not audited).
 Built as Phase 6c, one feature at a time: People view, meeting prep, missed-call follow-ups, editable watch list,
 night debrief, location routines, bills and subscriptions, travel, screen awareness + camera. Each follows D29.
+
+## D32: Recipe answers for private data (user-approved), 2026-11-25
+**Problem.** Claude understands any phrasing and hands personal questions back to the phone (D29), but the phone's
+fixed templates answered every finance question with the same net-worth line ("where am I losing money?", "card
+dues?", "large vs small cap?").
+**Decision.** After the phone fetches the data (behind the security gate), it sends Claude a second, small request:
+the user's question, the item Claude handed back, and an OUTLINE of the data (`DataOutline`): field names, types,
+row counts, labels of category fields (asset types, asset classes, market caps) and the service's own notes with
+digits removed. No amounts, dates, names, card names or numbers. Claude replies with text containing placeholders
+(`{{val ...}}`, `sum`, `count`, `min`, `max`, `avg`, `top`, `bottom`, `pct`, `list`, row filters) and the phone fills
+them in (`Recipe`). Any digit, currency or "lakh/crore/%" Claude writes outside a placeholder, or any placeholder
+that doesn't resolve, rejects the recipe and the fixed template answers instead, so an invented figure never
+reaches the user.
+- Finance only for now (email next). Not used when offline, over budget, or when the data came from an old save.
+- Cost: one small Haiku call per private finance question (logged in Usage as mode "recipe").
+- Rejected: sending totals to Claude (opt-in B); more templates (C).
+- Tests: placeholder engine on INDmoney's real structure (made-up numbers), outline leaks nothing, fallbacks, and
+  an end-to-end check of the real request body.

@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jarvis.agent.AgentLoop
+import dev.jarvis.agent.ClaudeRecipeWriter
 import dev.jarvis.agent.PhoneInfo
 import dev.jarvis.claude.AnthropicClient
 import dev.jarvis.claude.LlmClient
@@ -222,7 +223,7 @@ object AppModule {
             spokenPinReady = { settings.current().speakReplies && voicePin.ready() && !pin.isLocked() },
         ),
         snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
-        debugLog = shapeLog,
+        debugLog = shapeLog, recipes = ClaudeRecipeWriter(llm),
     )
 
     /** Battery level and charging state from the system (no permission needed). */
@@ -271,6 +272,7 @@ object AppModule {
     ) = AgentLoop(
         llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
         requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) }, debugLog = shapeLog,
+        recipes = ClaudeRecipeWriter(llm),
     )
 
     /** Debug builds only: result shapes (field names, never values) for writing on-phone templates. */

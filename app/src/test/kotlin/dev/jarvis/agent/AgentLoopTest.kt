@@ -483,4 +483,52 @@ class AgentLoopTest {
         val plain = AgentLoop(FakeLlm({ reply("Hi.") }), emptyMap(), meter, gate).run(emptyList(), "hi", settings).toList()
         assertTrue(plain.none { it is AgentEvent.Authorized })
     }
+
+    // ---- Recipe answers (D32) ----
+
+    private fun portfolio() = FakeConnector().apply { results["networth_snapshot"] = ConnectorCall.Ok(PORTFOLIO, toolError = false) }
+
+    @Test fun recipeAnswersAnyPhrasingFromTheOutline() = runBlocking {
+        var seen: Triple<String, String?, String>? = null
+        val writer = RecipeWriter { q, item, outline, _ ->
+            seen = Triple(q, item, outline)
+            RecipeDraft("Your weakest is {{bottom assets by return_percentage show assetclass_l2}} at {{min assets.return_percentage}}.", Usage(300, 40), "claude-haiku-5-5", 5)
+        }
+        val agent = AgentLoop(FakeLlm(handoff("net_worth")), indmoney(portfolio()), meter, allowAll, recipes = writer)
+        val done = agent.run(emptyList(), "where am I bleeding money", settings).toList().last() as AgentEvent.Finished
+        assertEquals("Your weakest is Gold at -10%.", done.text)
+        assertTrue(done.personal)
+        assertTrue((done.costUsd ?: 0.0) > 0.0)
+        // The writer got the question and the outline: structure, no values.
+        val (q, _, outline) = seen!!
+        assertEquals("where am I bleeding money", q)
+        assertTrue(outline.contains("assetclass_l2 values:"))
+        listOf("519000", "170000", "27000", "Zeta", "4321", "2026-11-30").forEach { assertFalse("outline leaks $it", outline.contains(it)) }
+        // Its cost is in the usage log.
+        assertTrue(meter.entries.first().any { it.mode == "recipe" })
+    }
+
+    @Test fun recipeWithAnInventedFigureFallsBackToTheTemplate() = runBlocking {
+        val writer = RecipeWriter { _, _, _, _ -> RecipeDraft("Your net worth is about 5 lakh.", Usage(300, 20), "claude-haiku-5-5", 5) }
+        val agent = AgentLoop(FakeLlm(handoff("net_worth")), indmoney(portfolio()), meter, allowAll, recipes = writer)
+        val done = agent.run(emptyList(), "what's my net worth", settings).toList().last() as AgentEvent.Finished
+        assertTrue(done.text, done.text.startsWith("Net worth is ₹5.2 lakh."))
+        assertFalse(done.text.contains("about 5 lakh"))
+    }
+
+    @Test fun recipeFailureFallsBackToTheTemplate() = runBlocking {
+        val writer = RecipeWriter { _, _, _, _ -> throw java.io.IOException("offline") }
+        val agent = AgentLoop(FakeLlm(handoff("bank_balance")), indmoney(portfolio()), meter, allowAll, recipes = writer)
+        val done = agent.run(emptyList(), "how much dry powder do I have", settings).toList().last() as AgentEvent.Finished
+        assertTrue(done.text, done.text.startsWith("Liquid: ₹80,000"))
+    }
+
+    @Test fun templateNetWorthIncludesTheBiggestAssetClasses() = runBlocking {
+        val agent = AgentLoop(FakeLlm(handoff("net_worth")), indmoney(portfolio()), meter, allowAll)
+        val done = agent.run(emptyList(), "what's my net worth", settings).toList().last() as AgentEvent.Finished
+        assertEquals(
+            "Net worth is ₹5.2 lakh. Invested ₹5 lakh, up ₹20,000 (4%). Biggest: Retirement ₹1.7 lakh, Global Equity ₹1.2 lakh, Debt ₹96,000.",
+            done.text,
+        )
+    }
 }

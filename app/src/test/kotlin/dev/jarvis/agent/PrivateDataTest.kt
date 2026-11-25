@@ -175,4 +175,42 @@ class PrivateDataTest {
             gmailServer.close()
         }
     }
+
+    @Test fun recipeRequestCarriesNoValuesNamesOrDates() = runBlocking {
+        val secrets = FakeSecretStore(mapOf(SecretKey.INDMONEY_ACCESS_TOKEN to token))
+        val connector = IndMoneyConnector(secrets, OAuthClient(http, testJson), McpClient(http, testJson), mcpUrl = indmoney.url("/mcp").toString())
+        val llm = AnthropicClient(http, testJson, apiKeyProvider = { "sk-test" }, baseUrl = anthropic.url("/").toString().trimEnd('/'), maxRetries = 0)
+        val agent = AgentLoop(
+            llm, mapOf(connector.id to connector), tempUsageMeter(db), allowAll,
+            snapshots = SnapshotStore(db.snapshots()), recipes = ClaudeRecipeWriter(llm),
+        )
+        // INDmoney's real envelope: the portfolio JSON as text inside "result" (made-up numbers).
+        val envelope = kotlinx.serialization.json.buildJsonObject { put("result", kotlinx.serialization.json.JsonPrimitive(PORTFOLIO)) }.toString()
+        val toolResult = kotlinx.serialization.json.buildJsonObject {
+            put("jsonrpc", kotlinx.serialization.json.JsonPrimitive("2.0")); put("id", kotlinx.serialization.json.JsonPrimitive(3))
+            put("result", kotlinx.serialization.json.buildJsonObject {
+                put("content", kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.buildJsonObject {
+                    put("type", kotlinx.serialization.json.JsonPrimitive("text")); put("text", kotlinx.serialization.json.JsonPrimitive(envelope))
+                })))
+            })
+        }.toString()
+        indmoney.enqueue(json("""{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}""")); indmoney.enqueue(MockResponse.Builder().code(202).build())
+        indmoney.enqueue(json("""{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}"""))
+        indmoney.enqueue(json(toolResult))
+        // Claude: routing hand-back, then the recipe.
+        anthropic.enqueue(stream(toolUseStream("p1", "private_data", """{"kinds":["net_worth"]}""")))
+        anthropic.enqueue(stream(textStream("Your net worth is {{val total_networth}} and you owe {{sum liabilities.credit_cards.total_due}} on cards.", model = "claude-haiku-5-5")))
+
+        val done = agent.run(emptyList(), "how loaded am I and what do I owe", AppSettings()).toList().last() as AgentEvent.Finished
+        assertEquals("Your net worth is ₹5.2 lakh and you owe ₹1,000 on cards.", done.text)
+
+        assertEquals(2, anthropic.requestCount)
+        anthropic.takeRequest() // routing: checked by the test above
+        val recipe = anthropic.takeRequest().text()
+        assertTrue(recipe.contains("how loaded am I"))
+        assertTrue(recipe.contains("assetclass_l2 values"))
+        listOf(token, "519000", "520000", "170000", "27000", "1000.0", "Zeta", "Omega", "4321", "8765", "2026-11-30", "\u2022").forEach {
+            assertFalse("recipe request contains $it", recipe.contains(it))
+        }
+    }
 }

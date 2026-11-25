@@ -245,6 +245,8 @@ object FinanceAnswers {
     internal fun assetLabel(raw: String): String {
         val key = raw.trim().uppercase(Locale.ENGLISH).replace(Regex("[^A-Z0-9]+"), "_").trim('_')
         ASSET_NAMES[key]?.let { return it }
+        // Already a readable name ("Global Equity"): keep it as written.
+        if (raw.any { it.isLowerCase() } && '_' !in raw) return raw.trim()
         val words = raw.trim().replace('_', ' ').replace(Regex("\\s+"), " ")
         // Short all-caps codes (EPF, PPF, NPS, ETF) stay as they are.
         if (words.length <= 4 && words.all { it.isUpperCase() || it.isDigit() }) return words
@@ -380,7 +382,8 @@ object FinanceAnswers {
     private val BANK_LABEL = Regex("bank|savings|cash|liquid|deposit|\\bfds?\\b")
     /** The label of an asset-class row. */
     private val CLASS_KEYS = listOf(
-        "assetclass", "assettype", "assetcategory", "asset", "category", "type", "class", "name", "label", "title", "displayname",
+        "assetclass", "assetclassl2", "assetclassl1", "assettype", "assetcategory", "asset", "category", "type", "class", "name", "label",
+        "title", "displayname",
     )
     private val CLASS_VALUE_FUZZY = listOf("currentvalue", "value", "amount", "networth", "total")
     private const val TOP_N = 5

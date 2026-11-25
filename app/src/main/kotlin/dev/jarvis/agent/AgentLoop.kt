@@ -100,6 +100,8 @@ class AgentLoop(
     private val phoneInfo: (() -> PhoneInfo)? = null,
     /** Debug-build log for result SHAPES only (field names and types, never values). */
     private val debugLog: ((String) -> Unit)? = null,
+    /** Recipe answers (D32): Claude writes the reply from the data's outline, the phone fills in values. Null = templates only. */
+    private val recipes: RecipeWriter? = null,
 ) {
     fun run(history: List<ChatTurn>, userText: String, settings: AppSettings): Flow<AgentEvent> = flow {
         // Simple questions the phone can answer itself: no request to Claude (instant, free).
@@ -123,7 +125,7 @@ class AgentLoop(
             val summary = UsageSummary.of(usageMeter.entries.first(), settings.monthlyBudgetUsd, Instant.ofEpochMilli(clock()), zone)
             if (summary.budgetFraction >= 1.0) {
                 if (fallbackPersonal.isNotEmpty()) {
-                    personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question))
+                    personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question), allowRecipe = false)
                     return@flow
                 }
                 auditRequest("budget_stop", null, null)
@@ -256,7 +258,7 @@ class AgentLoop(
         }
 
         if (offline) {
-            personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question))
+            personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question), allowRecipe = false)
             return@flow
         }
         // Claude judged this needs the user's own data: the phone takes over, behind the security gate.
@@ -272,7 +274,7 @@ class AgentLoop(
     /** Security gate (tier + policy), then the on-phone answer. Used for hand-backs and the offline backup. */
     private suspend fun FlowCollector<AgentEvent>.personalOnPhone(
         specs: List<ToolSpec>, item: String?, question: String, preferred: dev.jarvis.security.AuthMethod?,
-        settings: AppSettings, bankFocus: Boolean,
+        settings: AppSettings, bankFocus: Boolean, allowRecipe: Boolean = true,
     ) {
         when (val decision = access.authorize(specs, preferred)) {
             is AccessResult.Granted -> {
@@ -285,7 +287,7 @@ class AgentLoop(
                 answerOnPhone(
                     granted, question, settings,
                     Flags(decision.sensitive, decision.screenOnly, decision.method == dev.jarvis.security.AuthMethod.PIN),
-                    bankFocus = bankFocus, item = item,
+                    bankFocus = bankFocus, item = item, allowRecipe = allowRecipe,
                 )
             }
             is AccessResult.Denied -> {
@@ -296,6 +298,49 @@ class AgentLoop(
     }
 
     private fun nowZoned() = java.time.Instant.ofEpochMilli(clock()).atZone(zone)
+
+    /**
+     * Recipe answer (D32): Claude gets the question and the data's OUTLINE (no values) and writes the reply with
+     * placeholders; the phone fills them in. Returns the reply and its cost, or null to keep the template answer
+     * (no key, network error, or a recipe that invents a figure or doesn't resolve).
+     */
+    private suspend fun recipeAnswer(raws: Map<String, String>, question: String, item: String?, settings: AppSettings): Pair<String, Double>? {
+        val writer = recipes ?: return null
+        val parsed = raws.mapValues { (_, raw) -> FinanceAnswers.parse(raw) ?: return null }
+        val root = parsed.values.singleOrNull() ?: kotlinx.serialization.json.JsonObject(parsed)
+        val outline = DataOutline.of(root)
+        val draft = try {
+            writer.write(question, item, outline, settings.quickModel)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: run {
+            audit.record(AuditEvent(AuditCategory.REQUEST, "recipe", "unavailable", detail = PHONE))
+            return null
+        }
+        val cost = Pricing.cost(draft.model, draft.usage) ?: 0.0
+        withContext(NonCancellable) {
+            usageMeter.record(
+                UsageEntry(
+                    timestampMs = clock() - draft.latencyMs, model = draft.model, mode = "recipe",
+                    inputTokens = draft.usage.inputTokens, outputTokens = draft.usage.outputTokens,
+                    cacheWriteTokens = draft.usage.cacheCreationInputTokens, cacheReadTokens = draft.usage.cacheReadInputTokens,
+                    costUsd = cost, latencyMs = draft.latencyMs, timeToFirstTokenMs = null, toolsUsed = 0,
+                )
+            )
+        }
+        return try {
+            val text = Recipe.fill(draft.text, root, item)
+            audit.record(AuditEvent(AuditCategory.REQUEST, "recipe", "ok", detail = PHONE))
+            text to cost
+        } catch (e: Recipe.RecipeException) {
+            // Only the reason is logged, never the draft (it could echo the question).
+            debugLog?.invoke("recipe rejected: " + e.message)
+            audit.record(AuditEvent(AuditCategory.REQUEST, "recipe", "rejected", detail = PHONE))
+            null
+        }
+    }
 
     private class Flags(val sensitive: Boolean, val screenOnly: Boolean, val byPin: Boolean)
 
@@ -308,6 +353,7 @@ class AgentLoop(
         personal: List<ToolSpec>, question: String, settings: AppSettings, flags: Flags, bankFocus: Boolean = false,
         /** A specific fund or stock the user asked about (from Claude's hand-back), to filter holdings. */
         item: String? = null,
+        allowRecipe: Boolean = false,
     ) {
         val renderAs = if (bankFocus) "bank balance" else question
         // Whole-account reads run on the phone, plus item tools (email search) when an item was given; anything
@@ -323,6 +369,8 @@ class AgentLoop(
 
         val parts = mutableListOf<String>()
         val stamps = mutableListOf<DataStamp>()
+        /** Raw results by tool, for a recipe answer. */
+        val raws = LinkedHashMap<String, String>()
         var outcome = "ok"
         for (spec in reads) {
             val cid = spec.connectorId ?: continue
@@ -332,6 +380,7 @@ class AgentLoop(
             if (saved != null) {
                 audit.record(AuditEvent(AuditCategory.TOOL, "cache_hit", "ok", tool = spec.name, tier = spec.tier.name, detail = "cached"))
                 parts += PhoneAnswers.render(spec, saved.content, renderAs, item, nowZoned())
+                raws[spec.name] = saved.content
                 stamps += DataStamp(source, spec.name, saved.fetchedAt, cached = true)
                 continue
             }
@@ -351,6 +400,7 @@ class AgentLoop(
                     val now = clock()
                     if (spec.snapshot) snapshots?.save(cid, spec.name, r.text, now)
                     parts += PhoneAnswers.render(spec, r.text, renderAs, item, nowZoned())
+                    raws[spec.name] = r.text
                     stamps += DataStamp(source, spec.name, now, cached = false)
                 }
                 ConnectorCall.NeedsSignIn -> {
@@ -376,11 +426,17 @@ class AgentLoop(
                 }
             }
         }
-        val reply = parts.joinToString("\n\n").ifBlank { "Nothing to show." }
+        var reply = parts.joinToString("\n\n").ifBlank { "Nothing to show." }
+        var cost = 0.0
+        // A smarter reply for any phrasing (D32), when the data came through and the question is about money.
+        if (allowRecipe && recipes != null && outcome == "ok" && raws.size == reads.size && reads.all { it.group == ToolGroup.FINANCE }) {
+            emit(AgentEvent.ToolActivity(RECIPE_ACTIVITY))
+            recipeAnswer(raws, question, item, settings)?.let { (text, usd) -> reply = text; cost = usd }
+        }
         emit(AgentEvent.TextDelta(reply))
         emit(
             AgentEvent.Finished(
-                reply, Usage(), costUsd = 0.0, truncated = false, model = LOCAL_MODEL, dataStamps = stamps,
+                reply, Usage(), costUsd = cost, truncated = false, model = LOCAL_MODEL, dataStamps = stamps,
                 sensitive = flags.sensitive, screenOnly = flags.screenOnly, personal = true,
             )
         )
@@ -461,6 +517,7 @@ class AgentLoop(
         const val PRIVATE_ANSWER = "[answered privately on the phone]"
         /** Public market tools Claude may ask the phone to run. */
         private val PUBLIC_TOOLS = ToolRegistry.all.filter { it.connectorId == ToolRegistry.INDMONEY && !it.isPersonal }.map { it.name }
+        const val RECIPE_ACTIVITY = "recipe"
         private const val PHONE = "live·phone"
         private val EMPTY_ARGS = JsonObject(emptyMap())
         /** Shown as the "model" for answers made on the phone. */
