@@ -39,6 +39,12 @@ data class SecuritySettings(
     val level: PolicyLevel = PolicyLevel.SMART,
     val rules: Map<String, ToolRule> = emptyMap(),
     val sessions: SessionPolicy = SessionPolicy(),
+    /**
+     * The phone being unlocked (screen lock passed) counts as the check for personal and sensitive READS: no
+     * "PIN or fingerprint?" while the user holds an unlocked phone (D33, user request 2026-11-25). A locked phone
+     * still needs PIN or fingerprint. Actions (Tier 3) are never covered.
+     */
+    val trustUnlockedPhone: Boolean = true,
 )
 
 /** What the auth UI should show. The prompt itself never contains the protected data. */
@@ -77,6 +83,8 @@ class AuthCoordinator(
     private val notifier: LockoutNotifier = LockoutNotifier { },
     private val choiceTimeoutMs: Long = CHOICE_TIMEOUT_MS,
     private val promptTimeoutMs: Long = PROMPT_TIMEOUT_MS,
+    /** True while the phone is unlocked (keyguard passed). Default false: tests and unknown states always ask. */
+    private val deviceUnlocked: () -> Boolean = { false },
 ) : AccessController {
 
     private val gate = Mutex()
@@ -99,7 +107,8 @@ class AuthCoordinator(
     /** The PIN goes straight to verification; it's never stored, logged or shown. */
     fun submitPin(raw: String) { actions.trySend(Action.Pin(raw)) }
     /**
-     * A PIN said out loud (CLAUDE.md: spoken PIN + voice match). If the voice didn't match, the PIN is not
+     * A PIN said out loud. Voice match was removed (D33), so [SpokenPin.voiceMatched] is always true now; the check
+     * below stays as a guard. If the voice didn't match, the PIN is not
      * checked at all (no oracle for a stranger) and the attempt doesn't count toward the lockout.
      */
     fun submitSpokenPin(spoken: SpokenPin) {
@@ -125,6 +134,8 @@ class AuthCoordinator(
             val existing = sessions.current(tier, s.sessions)
             if (existing != null) {
                 method = existing.method
+            } else if (trustsUnlockedPhone(tier, s)) {
+                method = AuthMethod.DEVICE_UNLOCK
             } else {
                 when (val r = authenticate(tier, preferred, strongOnly = false)) {
                     is AuthOutcome.Ok -> method = r.method
@@ -141,15 +152,27 @@ class AuthCoordinator(
         AccessResult.Granted(
             tools = allowed,
             method = method,
-            screenOnly = method != null && method != AuthMethod.PIN && tier >= AuthTier.SENSITIVE,
+            // Fingerprint means "people may be near": screen only. PIN (said when alone) and an unlocked phone
+            // (the user's choice, D33) are spoken too.
+            screenOnly = (method == AuthMethod.BIOMETRIC || method == AuthMethod.DEVICE_CREDENTIAL) && tier >= AuthTier.SENSITIVE,
             sensitive = tier >= AuthTier.SENSITIVE,
         )
     }
 
     /** Unlock for reading saved sensitive messages (no tools). Returns true if a session now covers [tier]. */
     suspend fun unlock(tier: AuthTier = AuthTier.SENSITIVE): Boolean = gate.withLock {
-        if (sessions.isValid(tier, settings().sessions)) return@withLock true
+        val s = settings()
+        if (sessions.isValid(tier, s.sessions)) return@withLock true
+        if (trustsUnlockedPhone(tier, s)) return@withLock true
         authenticate(tier, preferred = null, strongOnly = false) is AuthOutcome.Ok
+    }
+
+    /** Unlocked phone + setting on + a read tier: grant a session without a prompt (D33). */
+    private suspend fun trustsUnlockedPhone(tier: AuthTier, s: SecuritySettings): Boolean {
+        if (!s.trustUnlockedPhone || tier > AuthTier.SENSITIVE || !deviceUnlocked()) return false
+        sessions.grant(tier, AuthMethod.DEVICE_UNLOCK)
+        audit(AuditCategory.AUTH, "device_unlock", "ok", tier = tier, method = AuthMethod.DEVICE_UNLOCK)
+        return true
     }
 
     /** Fingerprint/device credential only: needed to set, change or remove the PIN. */

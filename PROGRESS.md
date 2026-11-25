@@ -1,6 +1,79 @@
 # PROGRESS
 
-## Current phase
+## Current: Phase 6, private personal data (D29, docs/handoff-private-data.md), branch `phase-6-private-data`
+- [x] Step 1: research and plan (no code). D29 written; Google Cloud steps in docs/setup-keys.md section 3;
+  CLAUDE.md sections 2 and 12 updated. **Waiting for the user's review and picks** (phone model, calendar source,
+  LLM option).
+- [x] Step 2: INDmoney off Anthropic (code done 2026-11-22; **272 unit tests, 0 failures**; not yet built or
+  device-tested; not committed, at the user's request)
+  - `McpClient` (Streamable HTTP, JSON or SSE replies, sessions) replaces `McpProbe` and `McpServerConfig`
+  - net worth, holdings, SIPs and watchlist answered on the phone (`FinanceAnswers`), with no Claude call, free,
+    offline from the last saved result
+  - market questions: Claude gets the public tools as client tools and the phone runs them; personal tools blocked
+  - personal turns never resent as history; `PrivateDataTest` checks real HTTP bodies for token and holdings
+  - **device check needed:** INDmoney's real output format is undocumented. Templates match common field names;
+    otherwise the reply lists the fields. Debug builds log the shape only (`adb logcat -s JarvisShape`).
+  - device: portfolio answered "On device" (user, 2026-11-22). "Savings account balance" went to Haiku, so smart
+    routing was added (D29): clear phrases on the phone, Claude hands the rest back via `private_data`.
+    **279 unit tests, 0 failures**; APK SHA-256 `0bae585d…85ea89`, served on :8770
+  - user chose option B: Claude categorises every question; `private_data` hands personal ones back to the phone;
+    follow-ups keep the question, never the answer; phrase list only offline/over budget. **280 tests, 0 failures**
+- [x] Step 3: Google sign-in + Gmail read-only (code done 2026-11-25; **297 unit tests, 0 failures**; not yet built
+  or device-tested: needs the user's Google Cloud project, docs/setup-keys.md section 3)
+  - `GoogleAuthorizer`: play-services-auth 22.0.0 Authorization API, scope `gmail.readonly` only. Play services
+    holds the grant and hands out 1-hour tokens; the app stores no Google token (only a "linked" marker).
+  - `GmailApi`: messages.list + messages.get `format=metadata` (From, Subject) and snippet. Never bodies/attachments.
+  - `GmailConnector`: tools gmail_unread, gmail_recent (cached snapshots, offline with age label), gmail_search
+    (sender/topic from Claude's `item`; offline it filters the saved latest list). 401 -> clear token, retry once,
+    then "sign in again". Offers no tools to Claude.
+  - `EmailFilter` (before caching/showing): one-time codes and 2FA mails always dropped; promotions excluded in the
+    query; excluded senders editable in Settings (banks by default). Replies say how many were hidden.
+  - `EmailAnswers`: on-phone templates (count, latest 5, search hits), sender names without addresses.
+  - `private_data` kinds unread_email, recent_email, email_search; prompt updated. Email is Tier 1 (recent unlock).
+  - Settings + setup wizard: Gmail card (sign in, test, sign out, excluded senders).
+  - Tests: connector against a mock Gmail (metadata only, filter, retry, reauth), templates, filter, and an
+    end-to-end test proving no Google token, sender, subject or snippet reaches Anthropic.
+  - Not done (later): excluded Gmail labels (only senders/promotions now), "Private mode" switch (step 6).
+  - Device (2026-11-25): sign-in and Gmail work on the phone. User feedback: answers listed every email.
+  - **Triage added (2026-11-25, D29 "Email triage"):** important emails first (security, bills with amount and due
+    date, government, people, jobs, bank, travel, orders); newsletters/social/promos only counted. Bank mail no
+    longer hidden by default (OTPs still are). **310 unit tests, 0 failures.** Needs a device check with the real inbox.
+- INDmoney answers fixed (2026-11-25): the device showed INDmoney wraps its data as JSON text inside {"result": "..."}
+  (total_networth, total_invested, total_current_value, investments[asset_type, invested_value, current_value,
+  return, return_percentage]). The reader unwraps it; net worth = total, invested, gain, 3 biggest asset types;
+  bank questions use the Liquid asset type. Raw JSON is never shown. Settings → Data → "Copy data format (no
+  amounts)" for future format checks without adb. **318 unit tests, 0 failures.**
+- Recipe answers (D32, 2026-11-25): finance questions in any phrasing ("where am I bleeding money", "card dues",
+  "large vs small cap", "gold exposure") answered from Claude's placeholder recipe over the data outline; the phone
+  fills values; invented figures fall back to templates. Template fallback now lists the biggest asset classes.
+  Chat: Copy button under replies, long-press copies your message, top-bar copies the whole chat (private replies
+  flagged sensitive for the clipboard). **330 unit tests, 0 failures.** Needs device test.
+- D33 (2026-11-25): unlocked phone needs no PIN for personal/sensitive reads (setting, on by default; answers stay
+  on screen); voice match removed; spoken PIN fixes (mic hand-over, echo skip, shorter minimum, recognizer timeout,
+  forgiving digits, spoken explanations). **337 unit tests, 0 failures.** Needs device test: net worth with the
+  phone unlocked (no prompt), and the spoken PIN from the lock screen / pocket.
+  - Device: net worth works without a PIN on the unlocked phone (user, 2026-11-25). Finance answers on an
+    unlocked phone are now spoken too (user request).
+- [x] Step 4: Calendar (CalendarContract) and Google Drive metadata search (2026-11-26). Needs device test.
+- [~] Step 5: on-device summaries **cancelled** (2026-11-25, user: on-device model too slow, phone hung). Claude
+  is the only brain; personal data still answered on the phone via `private_data` (D29 update).
+- [x] Step 6: consent + redaction settings, Private mode (2026-11-26). Needs device test.
+- [x] Step 7: call log, then call recordings with on-phone transcripts (D30, 2026-11-26). Needs device test.
+- [x] Step 8: SMS / notification messaging with confirmed sending (CLAUDE.md section 7, 2026-11-26). Needs device test.
+- **Phase 6 code complete (D34), 376 unit tests, 0 failures.** Device checklist:
+  - Calendar: allow, "what's on today?", "when is my dentist appointment?"
+  - Drive: sign in on the Drive card (add the Drive API + scope in Google Cloud first), "find the budget sheet"
+  - Calls: allow (maybe "Allow restricted settings" first), "who called?", "missed calls", "last call with Mom"
+  - Recordings: choose the dialer folder, Transcribe, "what did Rahul say about the deadline?"
+  - Messages: allow SMS + notification access; "any WhatsApp messages?"; "text Mom I'm on my way" (check the
+    full draft, "send it", the countdown, Cancel); reply to a WhatsApp with its notification showing
+  - Privacy: Private mode on/off; allow one feature and check the first-send preview
+
+## Next: Phase 6c, JARVIS features (D31, user-approved 2026-11-25), one at a time
+1 People view, 2 meeting prep, 3 missed-call follow-ups, 4 watch list, 5 night debrief, 6 location routines,
+7 bills and subscriptions, 8 travel, 9 screen awareness + camera.
+
+## Previous phase
 **Phase 5: "Hey Jarvis" wake word.** Work is split into stacked pull requests:
 - PR #3 `phase-5-wake-word`: wake word, pocket mode, spoken PIN.
 - PR #4 `ui-jarvis-hud`: JARVIS HUD redesign.

@@ -36,6 +36,9 @@ class SnapshotStore(
         }
     }
 
+    /** The last saved result at any age (offline fallback; the reply says how old it is). */
+    suspend fun latest(connectorId: String, tool: String): SnapshotEntity? = dao.get(key(connectorId, tool))
+
     suspend fun clear() = dao.deleteAll()
 
     companion object {

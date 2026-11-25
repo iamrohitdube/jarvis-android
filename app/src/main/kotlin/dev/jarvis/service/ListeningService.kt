@@ -239,7 +239,7 @@ class ListeningService : Service() {
     /** Pocket mode: no screen. Talk through a Bluetooth headset if one is connected. */
     private suspend fun runHeadless(question: String?, soundPlayed: Boolean) {
         // No screen: a PIN prompt is answered by voice ("Say your PIN.").
-        val pinFlow = dev.jarvis.voice.VoicePinFlow(voicePin, tts, auth, settings)
+        val pinFlow = dev.jarvis.voice.VoicePinFlow(voicePin, tts, auth, settings, bus.micBusy)
         val pinWatcher = scope.launch { auth.prompt.collect { p -> pinFlow.onPrompt(p, voiceTurn = true) } }
         try {
             VoiceConversation(stt, tts, headlessAgent, history, settings, cue, voiceCapture, transcriber) { device.deviceLocked() }

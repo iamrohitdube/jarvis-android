@@ -99,6 +99,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSecurity: () -> Unit, vm: SettingsV
 
             SectionLabel("Connectors")
             ConnectorsSection(vm)
+            GmailSection(vm)
+            DriveSection(vm)
+            PhoneDataSection(vm)
+            RecordingsSection(vm)
+            MessagingSection(vm)
+            PrivacySection(vm)
 
             settings?.let {
                 SectionLabel("Intelligence")
@@ -479,6 +485,13 @@ private fun DataSection(vm: SettingsViewModel, s: AppSettings) {
                 Text(" Delete history", color = MaterialTheme.colorScheme.error)
             }
         }
+        val clipContext = LocalContext.current
+        TextButton(onClick = {
+            vm.copyDataFormat { text ->
+                clipContext.getSystemService(android.content.ClipboardManager::class.java)
+                    ?.setPrimaryClip(android.content.ClipData.newPlainText("JARVIS data format", text))
+            }
+        }) { Text("Copy data format (no amounts)") }
         StatusMessage(message)
     }
     if (confirmDelete) {

@@ -28,7 +28,7 @@ class IndMoneyConnectorTest {
     @Before fun setUp() {
         server = MockWebServer(); server.start()
         secrets = FakeSecretStore()
-        connector = IndMoneyConnector(secrets, OAuthClient(http, testJson, clock = { now }), McpProbe(http), clock = { now }, mcpUrl = base() + "/mcp")
+        connector = IndMoneyConnector(secrets, OAuthClient(http, testJson, clock = { now }), McpClient(http, testJson), clock = { now }, mcpUrl = base() + "/mcp")
     }
     @After fun tearDown() { server.close() }
 
@@ -54,7 +54,7 @@ class IndMoneyConnectorTest {
         assertEquals("rt", secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN))
         assertNull(secrets.get(SecretKey.INDMONEY_PENDING_VERIFIER)) // one-time values cleared
         assertEquals(ConnectorStatus.Connected, connector.status.first())
-        assertEquals("at", connector.mcpServer()!!.authorizationToken)
+        assertEquals("at", connector.endpoint()!!.token)
     }
 
     @Test fun mismatchedStateIsRejected() = runBlocking {
@@ -80,7 +80,7 @@ class IndMoneyConnectorTest {
         secrets.put(SecretKey.INDMONEY_CLIENT_ID, "cid")
         enqueueDiscovery()
         server.enqueue(ok("""{"access_token":"new","expires_in":3600,"refresh_token":"rt2"}"""))
-        assertEquals("new", connector.mcpServer()!!.authorizationToken)
+        assertEquals("new", connector.endpoint()!!.token)
         assertEquals("rt2", secrets.get(SecretKey.INDMONEY_REFRESH_TOKEN)) // rotated token stored
     }
 
@@ -91,19 +91,20 @@ class IndMoneyConnectorTest {
         secrets.put(SecretKey.INDMONEY_CLIENT_ID, "cid")
         enqueueDiscovery()
         server.enqueue(MockResponse.Builder().code(400).body("""{"error":"invalid_grant"}""").build())
-        assertNull(connector.mcpServer())
+        assertNull(connector.endpoint())
         assertEquals(ConnectorStatus.NeedsReauth, connector.status.first())
     }
 
     @Test fun manualTokenWithoutExpiryIsUsedAsIs() = runBlocking {
         connector.setManualToken("  pasted  ")
-        assertEquals("pasted", connector.mcpServer()!!.authorizationToken)
+        assertEquals("pasted", connector.endpoint()!!.token)
         assertEquals(0, server.requestCount)
     }
 
     @Test fun testCallsMcpInitializeWithBearer() = runBlocking {
         connector.setManualToken("tok")
-        server.enqueue(ok("""{"jsonrpc":"2.0","id":1,"result":{}}"""))
+        server.enqueue(ok("""{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}"""))
+        server.enqueue(MockResponse.Builder().code(202).build())
         assertEquals(ConnectorTestResult.Ok, connector.test())
         val r = server.takeRequest()
         assertEquals("/mcp", r.url.encodedPath)
@@ -115,6 +116,30 @@ class IndMoneyConnectorTest {
         server.enqueue(MockResponse.Builder().code(401).build())
         val r = connector.test()
         assertTrue(r is ConnectorTestResult.Failed && r.needsReauth)
+        assertEquals(ConnectorStatus.NeedsReauth, connector.status.first())
+    }
+
+    @Test fun toolCallGoesToIndmoneyWithBearerAndRetriesOnceAfterRefresh() = runBlocking {
+        secrets.put(SecretKey.INDMONEY_ACCESS_TOKEN, "old")
+        secrets.put(SecretKey.INDMONEY_REFRESH_TOKEN, "rt")
+        secrets.put(SecretKey.INDMONEY_CLIENT_ID, "cid")
+        server.enqueue(MockResponse.Builder().code(401).build()) // initialize with the old token
+        enqueueDiscovery()
+        server.enqueue(ok("""{"access_token":"new","expires_in":3600}"""))
+        server.enqueue(ok("""{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25"}}"""))
+        server.enqueue(MockResponse.Builder().code(202).build())
+        server.enqueue(ok("""{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"networth\":5}"}]}}"""))
+
+        val r = connector.callTool("networth_snapshot", kotlinx.serialization.json.JsonObject(emptyMap()))
+        assertEquals(ConnectorCall.Ok("""{"networth":5}""", toolError = false), r)
+        val auths = (1..server.requestCount).map { server.takeRequest() }.filter { it.url.encodedPath == "/mcp" }.map { it.headers["Authorization"] }
+        assertEquals(listOf("Bearer old", "Bearer new", "Bearer new", "Bearer new"), auths)
+    }
+
+    @Test fun rejectedTokenWithoutRefreshNeedsSignIn() = runBlocking {
+        connector.setManualToken("tok")
+        server.enqueue(MockResponse.Builder().code(401).build())
+        assertEquals(ConnectorCall.NeedsSignIn, connector.callTool("networth_snapshot", kotlinx.serialization.json.JsonObject(emptyMap())))
         assertEquals(ConnectorStatus.NeedsReauth, connector.status.first())
     }
 

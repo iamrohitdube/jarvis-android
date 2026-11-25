@@ -26,20 +26,23 @@ OAuthRedirectActivity ────────▶ IndMoneyConnector.completeSign
    (denied tools removed; all denied = local answer) and the tier check: a valid session, or the PIN-or-fingerprint
    prompt. Nothing below runs unless this grants access. The grant says whether the reply is sensitive and
    screen-only.
-3. **Saved data:** if every routed tool is a whole-account snapshot tool (net worth, holdings, SIPs, watchlist)
-   with a result younger than the reuse window (default 15 min), the tools are dropped and the saved results are
-   attached to the question as an untrusted `<cached_data>` block. Saying "refresh", "latest" or "live" skips this.
-4. **Connectors:** otherwise, each connector the tools need returns an MCP config with a valid token (refreshed if
-   expired). If a connector isn't signed in, the loop stops with "sign in" and doesn't call Claude.
+3. **Personal data, on the phone (D29):** if any granted tool is personal (above Tier 0: net worth, holdings,
+   SIPs, watchlist), Claude is not called. Each whole-account read comes from a fresh snapshot (default 15 min;
+   "refresh"/"latest"/"live" skips it) or a live call the phone makes to INDmoney (`McpClient`, Streamable HTTP).
+   `FinanceAnswers` turns the result into a short reply. If INDmoney can't be reached, the last saved result is
+   used with its age. The reply is marked `personal`, costs nothing and is never resent to Claude as history.
+4. **Public tools:** for market-data questions the connector returns the tool definitions (`tools/list`), which go
+   to Claude as ordinary client tools. If a connector isn't signed in, the loop stops with "sign in" and doesn't
+   call Claude.
 5. **Request:** `PromptBuilder.build()` creates the body: model, `max_tokens`, `stream`, automatic caching, the
-   stable persona, text-only history, the question (plus any cached data), `output_config.effort`, thinking off on
-   the quick route (Haiku only), and for tool requests `mcp_servers` plus an allowlisted `mcp_toolset`.
+   stable persona, text-only history with personal turns removed, the question, `output_config.effort`, thinking
+   off on the quick route (Haiku only), and the client tools. There is no `mcp_servers` and no connector token.
 6. **Stream:** `AnthropicClient.stream()` retries 408/409/429/5xx and connection errors before streaming starts,
-   then emits text and tool events. Stop cancels the HTTP call. `pause_turn` is resumed up to 3 times. An MCP auth
-   error triggers one token refresh and retry.
-7. **After the reply:** `ToolCalls.extract()` pairs `mcp_tool_use` with `mcp_tool_result` blocks. Each call is
-   audited. Successful whole-account calls made without arguments are saved as snapshots. The reply carries
-   `DataStamp`s, shown as "INDmoney · updated 10:42" or "saved data from 10:30".
+   then emits text events. Stop cancels the HTTP call. `pause_turn` is resumed up to 3 times.
+7. **Tool rounds:** on `stop_reason: tool_use`, the phone runs each requested tool through the connector, up to 4
+   rounds. Only routed public tools can run; a personal or unrouted tool gets an error result and an audit entry
+   ("blocked"). Results go back as `tool_result` blocks. The reply carries `DataStamp`s, shown as
+   "INDmoney · updated 10:42" or "saved data from 10:30".
 8. **Records:** one `UsageEntry` per turn (tokens, cost, latency) and one audit row for the request outcome. The
    chat screen saves the question and the reply to Room.
 

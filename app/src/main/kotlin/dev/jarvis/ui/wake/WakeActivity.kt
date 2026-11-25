@@ -66,7 +66,7 @@ class WakeViewModel @Inject constructor(
 ) : ViewModel() {
     /** Question said together with the wake word, if any (passed by the listener). */
     private val preheard: String? = savedState[WakeActivity.EXTRA_QUESTION]
-    private val voicePin = dev.jarvis.voice.VoicePinFlow(recorder, tts, auth, settings)
+    private val voicePin = dev.jarvis.voice.VoicePinFlow(recorder, tts, auth, settings, bus.micBusy)
     private val conversation = VoiceConversation(stt, tts, agent, history, settings, cue, capture, transcriber) { device.deviceLocked() }
     val phase = conversation.phase
     val transcript = conversation.transcript
@@ -142,6 +142,8 @@ class WakeViewModel @Inject constructor(
 @AndroidEntryPoint
 class WakeActivity : ComponentActivity() {
     @Inject lateinit var auth: AuthCoordinator
+    @Inject lateinit var sendCoordinator: dev.jarvis.messaging.SendCoordinator
+    @Inject lateinit var consentCoordinator: dev.jarvis.agent.ConsentCoordinator
     @Inject lateinit var bus: WakeBus
     @Inject lateinit var biometric: AndroidBiometricAvailability
     private val vm: WakeViewModel by viewModels()
@@ -204,6 +206,8 @@ class WakeActivity : ComponentActivity() {
                     )
                 }
                 AuthHost(auth)
+                dev.jarvis.ui.security.SendHost(sendCoordinator)
+                dev.jarvis.ui.security.ConsentHost(consentCoordinator)
             }
         }
     }

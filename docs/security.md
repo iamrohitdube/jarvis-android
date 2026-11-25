@@ -18,15 +18,17 @@ Phase 3 status: access tiers, PIN, fingerprint, lockout, sessions and tool polic
 - `.gitignore` excludes local.properties, keystores, env files and client secrets. CI runs gitleaks over the full history.
 
 ## What leaves the phone
+Personal data stays on the phone by default (D29).
 - Anthropic receives:
   - your messages
-  - the text of earlier turns (the last 8, clipped)
-  - saved INDmoney data when a question is answered from it (marked as untrusted data)
-  - the INDmoney access token, in `mcp_servers[].authorization_token`, so that Anthropic's MCP connector can call
-    INDmoney on your behalf
-  - tool results
-- INDmoney receives the OAuth sign-in (in the browser, on INDmoney's own page) and token refreshes. A connector
-  test sends an MCP `initialize` call straight from the phone.
+  - the text of earlier turns (the last 8, clipped), except turns answered from personal data
+  - for market questions (stock prices, fund details): the definitions and results of the public INDmoney tools
+    the phone ran for Claude
+- Anthropic never receives a connector token, your net worth, holdings, SIPs or watchlist. Those questions are
+  answered on the phone with no Claude call. `PrivateDataTest` checks this end to end against the real HTTP
+  requests.
+- INDmoney receives the OAuth sign-in (in the browser, on INDmoney's own page), token refreshes, and the MCP calls
+  the phone makes with your token.
 
 ## OAuth
 - Uses PKCE S256 and a random `state`. The state is checked before the code exchange, and pending values are

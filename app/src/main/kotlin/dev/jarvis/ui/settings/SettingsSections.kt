@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -147,6 +148,254 @@ fun ConnectorsSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
                     enabled = !busy && manualToken.text.isNotBlank(),
                 ) { Text("Save token") }
             }
+        }
+    }
+}
+
+/** Gmail (D29): Google sign-in through Play services, a free test read, and the privacy filter. Read-only. */
+@Composable
+fun GmailSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
+    val status by vm.gmailStatus.collectAsStateWithLifecycle()
+    val message by vm.gmailMessage.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val consent = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> vm.completeGoogleSignIn(result.data, onConnectorOk) }
+    var senders by remember(settings?.emailExcludedSenders) { mutableStateOf(settings?.emailExcludedSenders.orEmpty()) }
+
+    SettingsCard(
+        "Gmail", AppIcons.Mail,
+        subtitle = "Unread, latest and emails from someone (read-only, answered on the phone)",
+        tint = MaterialTheme.colorScheme.secondary,
+        trailing = {
+            when (status) {
+                ConnectorStatus.Connected -> StatusChip("Connected", ChipTone.GOOD)
+                ConnectorStatus.NotConnected -> StatusChip("Not connected")
+                ConnectorStatus.NeedsReauth -> StatusChip("Expired", ChipTone.WARN)
+            }
+        },
+    ) {
+        Hint("Needs your own Google Cloud project first (docs/setup-keys.md, section 3). JARVIS reads only sender, subject and preview; emails never go to Claude.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    vm.startGoogleSignIn({ pi ->
+                        consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())
+                    }, onConnectorOk)
+                },
+                enabled = !busy,
+            ) { Text(if (status == ConnectorStatus.NotConnected) "Sign in" else "Sign in again") }
+            if (status != ConnectorStatus.NotConnected) {
+                OutlinedButton(onClick = { vm.testGmail(onConnectorOk) }, enabled = !busy) { Text("Test") }
+                TextButton(onClick = vm::signOutGmail, enabled = !busy) { Text("Sign out") }
+            }
+        }
+        StatusMessage(message, error = message?.let { "Couldn't" in it || "failed" in it.lowercase() } == true)
+        Hint("Never shown or saved: one-time codes, promotions, and these senders (comma separated):")
+        androidx.compose.material3.OutlinedTextField(
+            senders, { senders = it }, label = { Text("Excluded senders") },
+            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(), minLines = 2,
+        )
+        OutlinedButton(
+            onClick = { vm.setEmailExcludedSenders(senders) },
+            enabled = senders != settings?.emailExcludedSenders,
+        ) { Text("Save filter") }
+    }
+}
+
+/** Google Drive (D29): file names and dates only, authorised separately from Gmail. */
+@Composable
+fun DriveSection(vm: SettingsViewModel) {
+    val status by vm.driveStatus.collectAsStateWithLifecycle()
+    val message by vm.driveMessage.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val consent = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> vm.completeGoogleSignIn(result.data, kind = SettingsViewModel.GoogleKind.DRIVE) }
+    SettingsCard(
+        "Google Drive", AppIcons.Storage,
+        subtitle = "Find a file by name, recent files (names and dates only)",
+        tint = MaterialTheme.colorScheme.secondary,
+        trailing = {
+            when (status) {
+                ConnectorStatus.Connected -> StatusChip("Connected", ChipTone.GOOD)
+                ConnectorStatus.NotConnected -> StatusChip("Not connected")
+                ConnectorStatus.NeedsReauth -> StatusChip("Expired", ChipTone.WARN)
+            }
+        },
+    ) {
+        Hint("Uses the same Google Cloud project as Gmail, with the Drive API and the drive.metadata.readonly scope added (docs/setup-keys.md section 3). File contents are never read.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    vm.startGoogleSignIn({ pi ->
+                        consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())
+                    }, kind = SettingsViewModel.GoogleKind.DRIVE)
+                },
+                enabled = !busy,
+            ) { Text(if (status == ConnectorStatus.NotConnected) "Sign in" else "Sign in again") }
+            if (status != ConnectorStatus.NotConnected) {
+                OutlinedButton(onClick = vm::testDrive, enabled = !busy) { Text("Test") }
+                TextButton(onClick = vm::signOutDrive, enabled = !busy) { Text("Sign out") }
+            }
+        }
+        StatusMessage(message, error = message?.let { "Couldn't" in it || "failed" in it.lowercase() } == true)
+    }
+}
+
+/** Privacy (D29 step 6): Private mode, and per-feature consent to send redacted data to Claude. */
+@Composable
+fun PrivacySection(vm: SettingsViewModel) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val message by vm.privacyMessage.collectAsStateWithLifecycle()
+    val settings = s ?: return
+    val allowed = dev.jarvis.agent.ConsentFeatures.decode(settings.claudeConsent)
+    SettingsCard("Privacy", AppIcons.Shield, subtitle = "What JARVIS may read, and what may go to Claude", tint = MaterialTheme.colorScheme.tertiary) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Private mode", style = MaterialTheme.typography.bodyLarge)
+                Hint("JARVIS reads none of your personal data (email, money, calendar, calls, messages) until you turn it off.")
+            }
+            androidx.compose.material3.Switch(checked = settings.privateMode, onCheckedChange = vm::setPrivateMode)
+        }
+        Text("Send to Claude (redacted)", style = MaterialTheme.typography.titleSmall)
+        Hint("Off (default): your data is answered on the phone and never sent. On: Claude can summarise and reason over that feature's data after the phone removes identifiers. The first time, you see exactly what would be sent.")
+        dev.jarvis.agent.ConsentFeatures.ALL.forEach { g ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(dev.jarvis.agent.ConsentFeatures.label(g), style = MaterialTheme.typography.bodyMedium)
+                    if (g in allowed) Hint(dev.jarvis.agent.ConsentFeatures.keeps(g))
+                }
+                androidx.compose.material3.Switch(checked = g in allowed, onCheckedChange = { vm.setConsent(g, it) })
+            }
+        }
+        StatusMessage(message, error = message != null)
+    }
+}
+
+/** Messaging (CLAUDE.md section 7): the off switch, trusted contacts, and the log of every send. */
+@Composable
+fun MessagingSection(vm: SettingsViewModel) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val log by vm.sentLog.collectAsStateWithLifecycle()
+    val settings = s ?: return
+    var trusted by remember(settings.trustedContacts) { mutableStateOf(settings.trustedContacts) }
+    SettingsCard("Messaging", AppIcons.Send, subtitle = "Texts and chat replies, always confirmed by you", tint = MaterialTheme.colorScheme.tertiary) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Allow sending", style = MaterialTheme.typography.bodyLarge)
+                Hint("Off = JARVIS never sends anything. On = every message shows the full text and waits for \"send it\", then 5 seconds to cancel.")
+            }
+            androidx.compose.material3.Switch(checked = settings.sendingEnabled, onCheckedChange = vm::setSendingEnabled)
+        }
+        Hint("Trusted contacts (comma separated) can be confirmed by voice. Anyone else needs a tap on the screen.")
+        androidx.compose.material3.OutlinedTextField(
+            trusted, { trusted = it }, label = { Text("Trusted contacts") },
+            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(onClick = { vm.setTrustedContacts(trusted) }, enabled = trusted != settings.trustedContacts) { Text("Save") }
+        Hint("At most ${settings.maxMessagesPerHour} messages an hour. Replies to WhatsApp and other chat apps work only while their message notification is showing.")
+        if (log.isNotEmpty()) {
+            Text("Recent", style = MaterialTheme.typography.titleSmall)
+            log.take(5).forEach { m ->
+                Hint("${m.outcome} · ${m.channel} to ${m.recipient}: \"${m.text.take(60)}\"")
+            }
+        }
+    }
+}
+
+/** Call recordings (D30): pick the dialer's recordings folder, then transcribe on the phone. */
+@Composable
+fun RecordingsSection(vm: SettingsViewModel) {
+    val status by vm.localStatus.collectAsStateWithLifecycle()
+    val done by vm.transcribedCount.collectAsStateWithLifecycle()
+    val pending by vm.pendingRecordings.collectAsStateWithLifecycle()
+    val progress by vm.transcribeProgress.collectAsStateWithLifecycle()
+    val message by vm.recordingsMessage.collectAsStateWithLifecycle()
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> vm.setRecordingsFolder(uri) }
+    LaunchedEffect(Unit) { vm.refreshPendingRecordings() }
+    val chosen = status[dev.jarvis.agent.ToolRegistry.RECORDINGS] == ConnectorStatus.Connected
+    SettingsCard(
+        "Call recordings", AppIcons.Mic,
+        subtitle = "Search what was said in calls your dialer recorded",
+        tint = MaterialTheme.colorScheme.secondary,
+        trailing = { if (chosen) StatusChip("$done transcribed", ChipTone.GOOD) else StatusChip("No folder") },
+    ) {
+        Hint("JARVIS can't record calls (Android blocks it). Turn on call recording in your phone's dialer, then pick the folder it saves to. Transcripts are made on the phone (English) and never sent to Claude.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { picker.launch(null) }) { Text(if (chosen) "Change folder" else "Choose folder") }
+            if (chosen) Button(onClick = vm::transcribeRecordings, enabled = progress == null) {
+                Text(if (pending > 0) "Transcribe $pending" else "Transcribe")
+            }
+        }
+        progress?.let { p ->
+            androidx.compose.material3.LinearProgressIndicator(progress = { p.done.toFloat() / p.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth())
+            Hint("Transcribing ${p.done + 1} of ${p.total}" + (p.current?.let { ": $it" } ?: "") + ". Keep JARVIS open.")
+        }
+        if (chosen && done > 0) TextButton(onClick = vm::deleteTranscripts) { Text("Delete transcripts") }
+        StatusMessage(message)
+    }
+}
+
+/** Phone data (D29/D30): each source is read on the phone with an Android permission; nothing leaves the phone. */
+@Composable
+fun PhoneDataSection(vm: SettingsViewModel) {
+    val status by vm.localStatus.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var denied by remember { mutableStateOf<String?>(null) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        vm.refreshLocalSources()
+        denied = if (result.values.any { !it }) {
+            "Not allowed. Android limits call log, SMS and notification access for apps installed from a file: open " +
+                "App settings → ⋮ (top right) → Allow restricted settings, then come back and tap Allow again."
+        } else null
+    }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { vm.refreshLocalSources(); onPauseOrDispose { } }
+    SettingsCard(
+        "Phone data", AppIcons.Storage,
+        subtitle = "Read on the phone and answered on the phone; never sent to Claude",
+        tint = MaterialTheme.colorScheme.secondary,
+    ) {
+        vm.localSources.filter { it.permissions.isNotEmpty() }.forEach { source ->
+            val ok = status[source.id] == ConnectorStatus.Connected
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(source.displayName, style = MaterialTheme.typography.bodyLarge)
+                    Hint(source.purpose)
+                }
+                if (ok) StatusChip("Allowed", ChipTone.GOOD)
+                else OutlinedButton(onClick = { launcher.launch(source.permissions.toTypedArray()) }) { Text("Allow") }
+            }
+        }
+        // Chat messages need Android's notification access (a settings screen, not a permission dialog).
+        vm.localSources.firstOrNull { it.id == dev.jarvis.agent.ToolRegistry.CHATS }?.let { chats ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(chats.displayName, style = MaterialTheme.typography.bodyLarge)
+                    Hint(chats.purpose + " Turn on \"JARVIS chat messages\" in notification access.")
+                }
+                if (status[chats.id] == ConnectorStatus.Connected) StatusChip("Allowed", ChipTone.GOOD)
+                else OutlinedButton(onClick = {
+                    runCatching { context.startActivity(dev.jarvis.messaging.JarvisNotificationListener.settingsIntent(context)) }
+                    denied = "If Android says it's restricted: App settings → ⋮ → Allow restricted settings, then try again."
+                }) { Text("Allow") }
+            }
+        }
+        denied?.let {
+            StatusMessage(it, error = true)
+            TextButton(onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(android.net.Uri.fromParts("package", context.packageName, null)),
+                    )
+                }
+            }) { Text("Open app settings") }
         }
     }
 }

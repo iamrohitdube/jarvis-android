@@ -113,8 +113,9 @@ class VoiceConversation(
             _transcript.value = question
             _reply.value = ""
             val reply = answer(question, turns, voice, conversationId) { conversationId = it }
-            turns += dev.jarvis.agent.ChatTurn(dev.jarvis.agent.ChatTurn.Role.USER, question)
-            turns += dev.jarvis.agent.ChatTurn(dev.jarvis.agent.ChatTurn.Role.ASSISTANT, reply.ifBlank { "(no reply)" })
+            // Personal answers (made on the phone from connector data) are never resent to Claude (D29).
+            turns += dev.jarvis.agent.ChatTurn(dev.jarvis.agent.ChatTurn.Role.USER, question, lastReplyPersonal)
+            turns += dev.jarvis.agent.ChatTurn(dev.jarvis.agent.ChatTurn.Role.ASSISTANT, reply.ifBlank { "(no reply)" }, lastReplyPersonal)
             // Keep the working context short (CLAUDE.md token rules): the last few exchanges only.
             while (turns.size > MAX_TURNS) { turns.removeAt(0); turns.removeAt(0) }
             delay(AFTER_SPEECH_MS) // don't hear the end of our own voice
@@ -145,6 +146,9 @@ class VoiceConversation(
         return (heard as? SttEvent.Final)?.text?.trim()?.takeIf { it.isNotEmpty() }
     }
 
+    /** Whether the last reply carried personal data (see [answer]). */
+    private var lastReplyPersonal = false
+
     /** Sends one question (with the conversation so far), speaks the reply, saves both; returns the reply text. */
     private suspend fun answer(
         question: String,
@@ -158,6 +162,7 @@ class VoiceConversation(
         val id = conversationId ?: history.startConversation(question).also(onConversation)
         history.addUserMessage(id, question)
         var replyText = ""
+        lastReplyPersonal = false
         agent.run(turns.toList(), question, settings.current()).collect { ev ->
             when (ev) {
                 is AgentEvent.Authorized -> voice.onAuthorized(ev.screenOnly, ev.sensitive, ev.byPin)
@@ -168,6 +173,7 @@ class VoiceConversation(
                 }
                 is AgentEvent.Finished -> {
                     replyText = ev.text
+                    lastReplyPersonal = ev.personal || ev.sensitive
                     history.addAssistantMessage(
                         id, ev.text, ev.model, ev.costUsd, ev.dataStamps,
                         sensitive = ev.sensitive, screenOnly = ev.screenOnly,
@@ -218,11 +224,14 @@ class HeadlessAccess(
     private val deviceLocked: () -> Boolean,
     /** Spoken PIN is set up and not locked out: then private questions can be unlocked by voice, without a screen. */
     private val spokenPinReady: suspend () -> Boolean = { false },
+    /** "Trust the unlocked phone" (D33): an unlocked phone needs no PIN for reads. */
+    private val trustUnlocked: suspend () -> Boolean = { false },
 ) : AccessController {
     override suspend fun authorize(tools: List<ToolSpec>, preferred: AuthMethod?): AccessResult {
         val tier = tools.requiredTier()
         if (tier >= AuthTier.PERSONAL) {
-            if (deviceLocked() || !sessions.isValid(tier, sessionPolicy())) {
+            val trusted = !deviceLocked() && tier <= AuthTier.SENSITIVE && trustUnlocked()
+            if (!trusted && (deviceLocked() || !sessions.isValid(tier, sessionPolicy()))) {
                 // No screen for a fingerprint: the only way in is the spoken PIN (the user's choice, 2026-11-21).
                 if (spokenPinReady()) return delegate.authorize(tools, AuthMethod.PIN)
                 return AccessResult.Denied(DenyReason.NEEDS_SCREEN, tools.filterNot { it.helper }.map { it.name })

@@ -26,16 +26,25 @@ server. You bring your own Anthropic API key.
   When it wakes by mistake, tap "Not for me" and it learns from that.
 - **Voice everywhere:** push-to-talk in chat, spoken replies sentence by sentence, barge-in, quiet mode, and a
   customisable wake sound.
-- **Spoken PIN:** say "PIN", then your PIN, even with the phone locked or in a pocket. It's recognised on the phone.
-  Checking that it's your voice is optional.
+- **Spoken PIN:** say your PIN when the phone is locked or in a pocket. It's recognised on the phone.
 - **Instant answers:** the time, date and battery are answered on the phone, with no API call.
 - JARVIS HUD design: always dark, arc-reactor blue, frosted-glass cards.
 - Chat screen with streaming replies, a Stop button and plain-language errors with a fix button.
 - Secure settings. The Anthropic key and connector tokens are encrypted with the Android Keystore.
-- INDmoney through Claude's MCP connector:
-  - browser sign-in (OAuth 2.1 + PKCE)
-  - read-only scopes
-  - automatic token refresh
+- **Your own data, private by default (D29):** Claude understands the question in any wording and hands it back to
+  the phone, which reads your data and answers. Nothing personal goes to Anthropic unless you allow it per feature.
+  - **INDmoney:** net worth, bank (Liquid), holdings, SIPs, card dues. Your token and numbers never go to Anthropic.
+    Jargon like "where am I bleeding money?" works: Claude writes the answer from the data's outline and the phone
+    fills in the figures (D32).
+  - **Gmail (read-only):** what needs attention first (bills with amount and due date, people, jobs, government,
+    security), newsletters and social only counted; search by sender or topic.
+  - **Calendar:** today, next meeting, when something is (the calendar your phone already syncs).
+  - **Google Drive:** find a file by name, recent files (names and dates only).
+  - **Calls:** who called, missed calls, last call with someone; search what was said in calls your dialer
+    recorded (transcribed on the phone).
+  - **Messages:** texts and WhatsApp/Telegram/Signal messages; send an SMS or reply to a chat after you confirm
+    the full text ("send it"), with 5 seconds to cancel and a log of every send.
+  - **Privacy controls:** Private mode, and per-feature consent to send a redacted version to Claude for summaries.
 - Cost control:
   - only the relevant tools are sent per request
   - Claude Haiku 5.5 by default, the cheapest model (Sonnet 5.5 is optional in Settings)
@@ -49,8 +58,10 @@ server. You bring your own Anthropic API key.
 - Saved portfolio data: reused for 15 minutes (configurable) to save a connector call, always labelled
   "updated 10:42" or "saved data from 10:30". Say "refresh" to fetch it live.
 - Audit log of requests, tool calls, sign-in and security events (no message content), kept 180 days.
+- Copy a reply, a message, or the whole chat.
 - Security:
-  - sensitive answers (net worth, holdings) ask "PIN or fingerprint?"
+  - with the phone unlocked, private answers need no extra PIN (a setting); when it's locked or in a pocket,
+    sensitive answers ask "PIN or fingerprint?"
   - fingerprint answers are shown on screen only
   - 3 wrong PINs lock the PIN until a fingerprint unlocks it
   - short sessions that end when the screen turns off or you type "lock"
@@ -60,7 +71,8 @@ server. You bring your own Anthropic API key.
 1. Install the app: see [docs/install.md](docs/install.md).
 2. Open it. The wizard asks for your Anthropic API key and tests it. **Set a monthly spend limit on your
    Anthropic key** in the Anthropic Console.
-3. Optional: sign in to INDmoney (see [docs/setup-keys.md](docs/setup-keys.md)).
+3. Optional: sign in to INDmoney, Gmail and Drive (see [docs/setup-keys.md](docs/setup-keys.md)), and allow the
+   phone data you want in Settings → Phone data.
 
 ## Permissions
 | Permission | Why |
@@ -73,18 +85,27 @@ server. You bring your own Anthropic API key.
 | Modify audio settings | Routes pocket conversations through your Bluetooth headset. |
 | Default digital assistant (optional, you choose it in Android Settings) | Keeps "Hey Jarvis" working any time, even after a restart, with no taps. |
 | Wake model (download, 3.7 MB) | The "hey jarvis" detector (openWakeWord; models are CC BY-NC-SA 4.0, free for personal, non-commercial use). |
-| Spoken PIN models (optional download, ~70 MB) | Digit recognition and optional voice match, entirely on the phone. |
+| Spoken PIN models (optional download, ~70 MB) | Digit recognition for the spoken PIN and call-recording transcripts, entirely on the phone. |
+| Calendar (optional) | Today's events and your next meeting. Read-only. |
+| Call log (optional, restricted*) | Who called, missed calls, last call with someone. |
+| SMS and contacts (optional, restricted*) | Read your texts; send an SMS only after you confirm the full text; contact names. |
+| Notification access (optional, restricted*) | Read WhatsApp/Telegram/other chat messages and reply through their own reply button. |
+| A folder you pick (optional) | Your dialer's call-recordings folder, read-only, for on-phone transcripts. JARVIS never records calls. |
+
+\*Android restricts these for apps installed from a downloaded file: if it refuses, open App info → ⋮ → **Allow
+restricted settings**, then allow again.
 | Run at startup | Only posts a "tap to resume listening" notification after a reboot. |
 | Notifications (Android 13+, optional) | Only to alert you if your JARVIS PIN gets locked. Asked when you set a PIN. |
 | Biometrics (no permission prompt) | Fingerprint or screen lock for sensitive answers, through Android's own prompt. |
 
-Microphone, notifications, SMS and the others arrive with the features that need them,
-each with an in-app explanation.
+Each is asked for in Settings → Phone data, with a one-line reason.
 
 ## Privacy and security
 - No analytics or telemetry. Usage stats, chat history, saved data and the audit log stay on the phone and are
   excluded from backups.
-- Your messages, plus data from connectors you use, are sent to Anthropic's API to produce answers.
+- Your questions are sent to Anthropic's API so Claude can understand them. Personal data (portfolio, email,
+  calendar, files, calls, messages) is read and answered on the phone and isn't sent to Anthropic, nor are
+  connector tokens (D29), unless you allow a feature in Settings → Privacy, and then only a redacted version.
 - Secrets never go in the repo, logs or backups. See [docs/security.md](docs/security.md).
 
 ## Building

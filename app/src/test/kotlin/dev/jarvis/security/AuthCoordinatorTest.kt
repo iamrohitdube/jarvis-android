@@ -282,4 +282,41 @@ class AuthCoordinatorTest {
         assertTrue(r.await())
         assertTrue(auth.unlock()) // session now valid: no second prompt
     }
+
+    // ---- Unlocked phone needs no prompt (D33) ----
+    private var unlocked = true
+    private val trusting = AuthCoordinator({ security }, sessions, pin, { bio }, audit, { lockNotifications++ }, deviceUnlocked = { unlocked })
+
+    @Test fun unlockedPhoneGrantsSensitiveReadsWithoutAPrompt() = runTest {
+        setPin()
+        val r = trusting.authorize(listOf(netWorth), null) as AccessResult.Granted
+        assertEquals(AuthMethod.DEVICE_UNLOCK, r.method)
+        assertTrue(r.sensitive)
+        assertFalse("answers on an unlocked phone are spoken too (user choice, D33)", r.screenOnly)
+        assertNull(trusting.prompt.value)
+        assertTrue(audit.events.any { it.action == "device_unlock" && it.outcome == "ok" })
+        assertTrue(trusting.unlock()) // saved sensitive messages open without a prompt too
+    }
+
+    @Test fun lockedPhoneStillAsks() = runTest {
+        setPin()
+        unlocked = false
+        async { trusting.authorize(listOf(netWorth), null) }.also { runCurrent() }
+        assertEquals(AuthPrompt.Stage.CHOOSE, trusting.prompt.value?.stage)
+        trusting.cancel(); runCurrent()
+    }
+
+    @Test fun settingOffAlwaysAsks() = runTest {
+        setPin()
+        security = SecuritySettings(trustUnlockedPhone = false)
+        async { trusting.authorize(listOf(netWorth), null) }.also { runCurrent() }
+        assertEquals(AuthPrompt.Stage.CHOOSE, trusting.prompt.value?.stage)
+        trusting.cancel(); runCurrent()
+    }
+
+    @Test fun policyDenyStillWinsOnAnUnlockedPhone() = runTest {
+        security = SecuritySettings(rules = mapOf("networth_snapshot" to ToolRule.DENY))
+        val d = trusting.authorize(listOf(netWorth), null) as AccessResult.Denied
+        assertEquals(DenyReason.POLICY, d.reason)
+    }
 }

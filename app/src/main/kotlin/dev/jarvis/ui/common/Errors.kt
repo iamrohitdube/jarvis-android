@@ -11,7 +11,9 @@ data class UiError(val message: String, val fix: FixAction, val fixLabel: String
 fun AgentError.toUi(): UiError = when (this) {
     AgentError.MissingKey -> UiError("No Anthropic API key yet.", FixAction.OPEN_SETTINGS, "Add key")
     AgentError.BadKey -> UiError("Anthropic rejected the API key.", FixAction.OPEN_SETTINGS, "Check key")
-    is AgentError.ConnectorSignIn -> UiError("$name isn't signed in, or the sign-in expired.", FixAction.OPEN_SETTINGS, "Sign in again")
+    is AgentError.ConnectorSignIn ->
+        if (connectorId in dev.jarvis.agent.ToolRegistry.LOCAL_SOURCES) UiError("JARVIS needs access to your $name. Allow it in Settings → Phone data.", FixAction.OPEN_SETTINGS, "Allow")
+        else UiError("$name isn't signed in, or the sign-in expired.", FixAction.OPEN_SETTINGS, "Sign in again")
     is AgentError.RateLimited -> UiError(
         "Rate limited by Anthropic." + (retryAfterSeconds?.let { " Try again in ${it}s." } ?: " Try again shortly."),
         FixAction.RETRY, "Retry",

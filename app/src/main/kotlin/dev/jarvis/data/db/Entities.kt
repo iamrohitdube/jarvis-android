@@ -83,3 +83,47 @@ data class UsageEntity(
     val timeToFirstTokenMs: Long?,
     val toolsUsed: Int,
 )
+
+/**
+ * On-phone transcript of one call recording (D30). The recording stays where the dialer saved it; only the text
+ * (made on the phone) is kept here, never sent anywhere. [status]: done, failed, too_long, no_models.
+ */
+@Entity(tableName = "transcripts", indices = [Index("recordedAt")])
+data class TranscriptEntity(
+    @PrimaryKey val uri: String,
+    val name: String,
+    val recordedAt: Long,
+    val durationMs: Long,
+    val text: String,
+    val status: String,
+    val updatedAt: Long,
+)
+
+/**
+ * A chat message seen in another app's notification (WhatsApp, Telegram, SMS apps…), kept briefly so JARVIS can
+ * read it back and reply through the notification (D29 step 8). [replyKey] = notification key while it can be replied to.
+ */
+@Entity(tableName = "captured_messages", indices = [Index("at"), Index("sender")])
+data class CapturedMessageEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val app: String,
+    val packageName: String,
+    val sender: String,
+    val conversation: String,
+    val text: String,
+    val at: Long,
+    val isGroup: Boolean,
+    val replyKey: String?,
+)
+
+/** Every message JARVIS sent, with what was approved and when (CLAUDE.md section 7: log every send). */
+@Entity(tableName = "sent_messages", indices = [Index("approvedAt")])
+data class SentMessageEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val channel: String,
+    val recipient: String,
+    val text: String,
+    val approvedAt: Long,
+    val sentAt: Long?,
+    val outcome: String,
+)

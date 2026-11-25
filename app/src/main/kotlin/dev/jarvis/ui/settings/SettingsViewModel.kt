@@ -26,6 +26,7 @@ import dev.jarvis.ui.SignInEvents
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -38,6 +39,16 @@ class SettingsViewModel @Inject constructor(
     private val secrets: SecretStore,
     private val llm: LlmClient,
     private val indMoney: IndMoneyConnector,
+    private val connectors: Map<String, @JvmSuppressWildcards dev.jarvis.connectors.Connector>,
+    private val recordingIndexer: dev.jarvis.connectors.phone.RecordingIndexer,
+    private val transcripts: dev.jarvis.data.db.TranscriptDao,
+    sentMessages: dev.jarvis.data.db.SentMessageDao,
+    private val authCoordinator: dev.jarvis.security.AuthCoordinator,
+    private val biometric: dev.jarvis.security.AndroidBiometricAvailability,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
+    private val gmail: dev.jarvis.connectors.google.GmailConnector,
+    private val drive: dev.jarvis.connectors.google.DriveConnector,
+    private val google: dev.jarvis.connectors.google.GoogleAuth,
     private val signInEvents: SignInEvents,
     private val snapshots: SnapshotStore,
     private val history: HistoryStore,
@@ -334,6 +345,110 @@ class SettingsViewModel @Inject constructor(
     val indMoneyStatus: StateFlow<ConnectorStatus> = indMoney.status
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
 
+    /** Phone-data sources (calendar, call log, SMS…) and whether access is granted. */
+    val localSources: List<dev.jarvis.connectors.phone.LocalConnector> =
+        connectors.values.filterIsInstance<dev.jarvis.connectors.phone.LocalConnector>().sortedBy { it.displayName }
+    val localStatus: StateFlow<Map<String, ConnectorStatus>> =
+        kotlinx.coroutines.flow.combine(localSources.map { s -> s.status.map { s.id to it } }) { it.toMap() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** After a permission dialog (or returning from Android settings). */
+    fun refreshLocalSources() = localSources.forEach { it.refreshStatus() }
+
+    // ---- Privacy (D29 step 6) ----
+    val privacyMessage = MutableStateFlow<String?>(null)
+
+    fun setPrivateMode(on: Boolean) = viewModelScope.launch {
+        repo.setPrivateMode(on)
+        audit.record(AuditEvent(AuditCategory.DATA, "private_mode", if (on) "on" else "off"))
+    }
+
+    /** Allowing a feature's data to go to Claude needs fingerprint or screen lock; taking it back never does. */
+    fun setConsent(group: dev.jarvis.agent.ToolGroup, on: Boolean) = viewModelScope.launch {
+        if (on && biometric.deviceSecure() && authCoordinator.strongAuth() == null) {
+            privacyMessage.value = "Your fingerprint or screen lock is needed to allow this."
+            return@launch
+        }
+        val now = dev.jarvis.agent.ConsentFeatures.decode(repo.current().claudeConsent)
+        val next = if (on) now + group else now - group
+        repo.setClaudeConsent(dev.jarvis.agent.ConsentFeatures.encode(next))
+        if (!on) {
+            val seen = dev.jarvis.agent.ConsentFeatures.decode(repo.current().consentPreviewed) - group
+            repo.setConsentPreviewed(dev.jarvis.agent.ConsentFeatures.encode(seen))
+        }
+        privacyMessage.value = null
+        audit.record(AuditEvent(AuditCategory.DATA, "consent_setting", if (on) "on" else "off", detail = group.name))
+    }
+
+    // ---- Messaging (CLAUDE.md section 7) ----
+    val sentLog: StateFlow<List<dev.jarvis.data.db.SentMessageEntity>> =
+        sentMessages.recent(10).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun setSendingEnabled(v: Boolean) = viewModelScope.launch {
+        repo.setSendingEnabled(v)
+        audit.record(AuditEvent(AuditCategory.TOOL, "sending_switch", if (v) "on" else "off"))
+    }
+
+    fun setTrustedContacts(v: String) = viewModelScope.launch { repo.setTrustedContacts(v) }
+
+    // ---- Call recordings (D30) ----
+    val transcribedCount: StateFlow<Int> = transcripts.doneCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val transcribeProgress = recordingIndexer.progress
+    val recordingsMessage = MutableStateFlow<String?>(null)
+    val pendingRecordings = MutableStateFlow(0)
+
+    /** The folder picked in the system picker: keep a read grant to it only (any older folder is released). */
+    fun setRecordingsFolder(uri: android.net.Uri?) = viewModelScope.launch {
+        if (uri == null) return@launch
+        val resolver = appContext.contentResolver
+        resolver.persistedUriPermissions.filter { it.uri != uri }.forEach {
+            runCatching { resolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        runCatching { resolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            .onFailure { recordingsMessage.value = "Couldn't keep access to that folder. Try picking it again." }
+        refreshLocalSources()
+        refreshPendingRecordings()
+        audit.record(AuditEvent(AuditCategory.DATA, "recordings_folder", "set"))
+    }
+
+    fun refreshPendingRecordings() = viewModelScope.launch {
+        pendingRecordings.value = runCatching { recordingIndexer.pending().size }.getOrDefault(0)
+    }
+
+    fun transcribeRecordings() = viewModelScope.launch {
+        recordingsMessage.value = null
+        val s = recordingIndexer.run(maxFiles = 10)
+        recordingsMessage.value = when {
+            s.noModels -> "Download the voice models first (Security → Spoken PIN). Transcription runs on the phone."
+            s.transcribed == 0 && s.failed == 0 -> "Nothing new to transcribe."
+            else -> "Transcribed ${s.transcribed}" + (if (s.failed > 0) ", ${s.failed} couldn't be read" else "") +
+                (if (s.remaining > 0) ". ${s.remaining} left: tap again." else ".")
+        }
+        audit.record(AuditEvent(AuditCategory.DATA, "transcribe_recordings", "ok", detail = "${s.transcribed}/${s.failed}"))
+        refreshPendingRecordings()
+    }
+
+    fun deleteTranscripts() = viewModelScope.launch {
+        transcripts.deleteAll()
+        recordingsMessage.value = "Transcripts deleted. The recordings themselves are untouched."
+        audit.record(AuditEvent(AuditCategory.DATA, "delete_transcripts", "ok"))
+        refreshPendingRecordings()
+    }
+
+    val gmailStatus: StateFlow<ConnectorStatus> = gmail.status
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
+    /** Result line for the Gmail card. */
+    val gmailMessage = MutableStateFlow<String?>(null)
+    val driveStatus: StateFlow<ConnectorStatus> = drive.status
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectorStatus.NotConnected)
+    val driveMessage = MutableStateFlow<String?>(null)
+
+    enum class GoogleKind { GMAIL, DRIVE }
+    private fun serviceOf(k: GoogleKind): dev.jarvis.connectors.google.GoogleService = if (k == GoogleKind.GMAIL) gmail else drive
+    private fun authorizerOf(k: GoogleKind) = if (k == GoogleKind.GMAIL) google.gmail else google.drive
+    private fun messageOf(k: GoogleKind) = if (k == GoogleKind.GMAIL) gmailMessage else driveMessage
+    private fun nameOf(k: GoogleKind) = if (k == GoogleKind.GMAIL) "Gmail" else "Drive"
+
     /** Result line for the key test ("Key works." / error). */
     val keyMessage = MutableStateFlow<String?>(null)
     /** Result line for connector actions; also receives browser sign-in outcomes. */
@@ -394,6 +509,46 @@ class SettingsViewModel @Inject constructor(
         signInEvents.post("Token saved (encrypted). Tap Test to check it.")
     }
 
+    /** Google sign-in: Play services either grants at once or returns a consent screen for the UI to launch. */
+    fun startGoogleSignIn(launchConsent: (android.app.PendingIntent) -> Unit, onOk: () -> Unit = {}, kind: GoogleKind = GoogleKind.GMAIL) = launchBusy {
+        val message = messageOf(kind)
+        message.value = "Asking Google…"
+        when (val r = authorizerOf(kind).authorize()) {
+            dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Granted -> { serviceOf(kind).markLinked(); testGoogleNow(kind, onOk) }
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.NeedsUser -> { message.value = null; launchConsent(r.pendingIntent) }
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Failed ->
+                message.value = "Couldn't start Google sign-in: ${r.message}. Check the Android client in Google Cloud (docs/setup-keys.md 3.3)."
+        }
+    }
+
+    /** The consent screen's result. */
+    fun completeGoogleSignIn(data: android.content.Intent?, onOk: () -> Unit = {}, kind: GoogleKind = GoogleKind.GMAIL) = launchBusy {
+        if (authorizerOf(kind).completeFromIntent(data)) { serviceOf(kind).markLinked(); testGoogleNow(kind, onOk) }
+        else messageOf(kind).value = "Google sign-in was cancelled or failed."
+    }
+
+    fun testGmail(onOk: () -> Unit = {}) = launchBusy { testGoogleNow(GoogleKind.GMAIL, onOk) }
+    fun testDrive() = launchBusy { testGoogleNow(GoogleKind.DRIVE) {} }
+
+    private suspend fun testGoogleNow(kind: GoogleKind, onOk: () -> Unit) {
+        val message = messageOf(kind)
+        message.value = "Testing ${nameOf(kind)}…"
+        when (val r = serviceOf(kind).test()) {
+            ConnectorTestResult.Ok -> { message.value = "${nameOf(kind)} works."; onOk() }
+            is ConnectorTestResult.Failed -> message.value = "Couldn't read ${nameOf(kind)}: ${r.message}"
+        }
+    }
+
+    fun signOutGmail() = signOutGoogle(GoogleKind.GMAIL)
+    fun signOutDrive() = signOutGoogle(GoogleKind.DRIVE)
+
+    private fun signOutGoogle(kind: GoogleKind) = launchBusy {
+        serviceOf(kind).signOut()
+        messageOf(kind).value = "${nameOf(kind)} disconnected on this phone. To remove access fully: myaccount.google.com/connections."
+    }
+
+    fun setEmailExcludedSenders(v: String) = viewModelScope.launch { repo.setEmailExcludedSenders(v) }
+
     fun signOutIndMoney() = launchBusy {
         indMoney.signOut()
         signInEvents.post("INDmoney signed out.")
@@ -409,6 +564,24 @@ class SettingsViewModel @Inject constructor(
         if (v == null || v < 0) { dataMessage.value = "Enter minutes as a whole number (0 = always live)."; return@launch }
         repo.setSnapshotMaxAgeMinutes(v)
         dataMessage.value = if (v == 0) "Portfolio data will always be fetched live." else "Saved portfolio data will be reused for $v min."
+    }
+
+    /**
+     * The STRUCTURE of the saved INDmoney replies (field names and types, plus asset-class names for the net worth
+     * summary; never amounts), so the on-phone reader can be fitted to INDmoney's undocumented format.
+     */
+    fun copyDataFormat(copy: (String) -> Unit) = viewModelScope.launch {
+        val saved = snapshots.all.first().filter { it.connectorId == dev.jarvis.agent.ToolRegistry.INDMONEY }
+        if (saved.isEmpty()) {
+            dataMessage.value = "No saved INDmoney data yet. Ask \"what's my net worth?\" first."
+            return@launch
+        }
+        val text = "JARVIS data format (names and types only, no amounts)\n" + saved.joinToString("\n\n") { s ->
+            s.tool + ": " + dev.jarvis.agent.JsonShape.describe(s.content, maxDepth = 6, labels = s.tool == "networth_snapshot")
+        }
+        copy(text)
+        audit.record(AuditEvent(AuditCategory.DATA, "copy_data_format", "ok"))
+        dataMessage.value = "Copied the data format (no amounts). Paste it in your chat with the developer."
     }
 
     fun clearSnapshots() = viewModelScope.launch {

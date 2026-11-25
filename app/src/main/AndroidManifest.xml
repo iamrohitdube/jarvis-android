@@ -19,6 +19,12 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- After a reboot: post a "tap to resume listening" notification (the mic cannot start by itself). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Phone data (D29/D30), read-only and answered on the phone; each is asked for in Settings → Phone data. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <!-- Lets the app find a browser that supports Custom Tabs for OAuth sign-in (package visibility). -->
     <queries>
@@ -72,6 +78,20 @@
                 <data android:scheme="dev.jarvis" android:host="oauth" />
             </intent-filter>
         </activity>
+        <!-- Chat messages from notifications (D29 step 8). The user turns it on in Android's notification access. -->
+        <service
+            android:name=".messaging.JarvisNotificationListener"
+            android:exported="false"
+            android:label="JARVIS chat messages"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.notification.default_filter_types"
+                android:value="conversations|alerting" />
+        </service>
+
         <service
             android:name=".service.ListeningService"
             android:exported="false"

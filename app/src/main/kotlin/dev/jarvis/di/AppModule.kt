@@ -10,13 +10,18 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jarvis.agent.AgentLoop
+import dev.jarvis.agent.ClaudeRecipeWriter
 import dev.jarvis.agent.PhoneInfo
 import dev.jarvis.claude.AnthropicClient
 import dev.jarvis.claude.LlmClient
 import dev.jarvis.claude.UsageMeter
 import dev.jarvis.connectors.Connector
-import dev.jarvis.connectors.McpProbe
+import dev.jarvis.connectors.McpClient
 import dev.jarvis.connectors.indmoney.IndMoneyConnector
+import dev.jarvis.connectors.google.EmailFilter
+import dev.jarvis.connectors.google.GmailApi
+import dev.jarvis.connectors.google.GmailConnector
+import dev.jarvis.connectors.google.GoogleAuthorizer
 import dev.jarvis.connectors.oauth.OAuthClient
 import dev.jarvis.data.AuditLog
 import dev.jarvis.data.SettingsRepository
@@ -49,6 +54,7 @@ import dev.jarvis.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -132,15 +138,143 @@ object AppModule {
     fun oauthClient(http: OkHttpClient, json: Json) = OAuthClient(http, json)
 
     @Provides @Singleton
-    fun mcpProbe(http: OkHttpClient) = McpProbe(http)
+    fun mcpClient(http: OkHttpClient, json: Json) = McpClient(http, json)
 
     @Provides @Singleton
-    fun indMoney(secrets: SecretStore, oauth: OAuthClient, probe: McpProbe, audit: AuditLog) =
-        IndMoneyConnector(secrets, oauth, probe, audit = audit)
+    fun indMoney(secrets: SecretStore, oauth: OAuthClient, mcp: McpClient, audit: AuditLog) =
+        IndMoneyConnector(secrets, oauth, mcp, audit = audit)
 
     @Provides @Singleton
-    fun connectors(indMoney: IndMoneyConnector): Map<String, @JvmSuppressWildcards Connector> =
-        mapOf(indMoney.id to indMoney)
+    fun googleAuth(@ApplicationContext c: Context) = dev.jarvis.connectors.google.GoogleAuth(
+        gmail = GoogleAuthorizer(c, listOf(GoogleAuthorizer.GMAIL_READONLY)),
+        drive = GoogleAuthorizer(c, listOf(GoogleAuthorizer.DRIVE_METADATA_READONLY)),
+    )
+
+    @Provides @Singleton
+    fun drive(secrets: SecretStore, google: dev.jarvis.connectors.google.GoogleAuth, http: OkHttpClient, json: Json, audit: AuditLog) =
+        dev.jarvis.connectors.google.DriveConnector(secrets, google.drive, dev.jarvis.connectors.google.DriveApi(http, json), json, audit)
+
+    @Provides @Singleton
+    fun gmail(secrets: SecretStore, google: dev.jarvis.connectors.google.GoogleAuth, http: OkHttpClient, json: Json, settings: SettingsRepository, audit: AuditLog) =
+        GmailConnector(
+            secrets, google.gmail, GmailApi(http, json), json,
+            excludedSenders = { EmailFilter.parseSenders(settings.settings.first().emailExcludedSenders) },
+            audit = audit,
+        )
+
+    @Provides @Singleton
+    fun calendar(@ApplicationContext c: Context, json: Json) = dev.jarvis.connectors.phone.CalendarConnector(
+        dev.jarvis.connectors.phone.AndroidCalendarSource(c.contentResolver), json,
+        granted = { hasPermissions(c, dev.jarvis.connectors.phone.CalendarConnector.PERMISSIONS) },
+    )
+
+    @Provides @Singleton
+    fun callLog(@ApplicationContext c: Context, json: Json) = dev.jarvis.connectors.phone.CallLogConnector(
+        dev.jarvis.connectors.phone.AndroidCallLogSource(c.contentResolver), json,
+        granted = { hasPermissions(c, dev.jarvis.connectors.phone.CallLogConnector.PERMISSIONS) },
+    )
+
+    @Provides @Singleton
+    fun transcriptDao(db: JarvisDatabase) = db.transcripts()
+
+    @Provides @Singleton
+    fun capturedMessageDao(db: JarvisDatabase) = db.capturedMessages()
+
+    @Provides @Singleton
+    fun sentMessageDao(db: JarvisDatabase) = db.sentMessages()
+
+    /** The recordings folder is the app's one persisted read grant (Storage Access Framework). */
+    private fun recordingsFolder(c: Context): android.net.Uri? =
+        c.contentResolver.persistedUriPermissions.firstOrNull { it.isReadPermission }?.uri
+
+    @Provides @Singleton
+    fun recordingIndexer(@ApplicationContext c: Context, dao: dev.jarvis.data.db.TranscriptDao, voicePin: VoicePinEngine) =
+        dev.jarvis.connectors.phone.RecordingIndexer(
+            store = { recordingsFolder(c)?.let { dev.jarvis.connectors.phone.SafRecordingStore(c, it) } },
+            dao = dao,
+            transcriber = { uri ->
+                voicePin.withTranscriber { transcribe ->
+                    val text = StringBuilder()
+                    val ms = dev.jarvis.voice.AudioDecoder.decode(c, android.net.Uri.parse(uri)) { chunk ->
+                        text.append(transcribe(chunk).trim()).append(' ')
+                    }
+                    text.toString() to ms
+                }
+            },
+        )
+
+    @Provides @Singleton
+    fun recordings(@ApplicationContext c: Context, dao: dev.jarvis.data.db.TranscriptDao, indexer: dev.jarvis.connectors.phone.RecordingIndexer, json: Json) =
+        dev.jarvis.connectors.phone.RecordingsConnector(dao, indexer, json, granted = { recordingsFolder(c) != null })
+
+    @Provides @Singleton
+    fun contacts(@ApplicationContext c: Context) = dev.jarvis.messaging.Contacts(c.contentResolver)
+
+    @Provides @Singleton
+    fun sms(@ApplicationContext c: Context, contacts: dev.jarvis.messaging.Contacts, json: Json) =
+        dev.jarvis.messaging.SmsConnector(c.contentResolver, contacts, json, granted = { hasPermissions(c, dev.jarvis.messaging.SmsConnector.PERMISSIONS) })
+
+    @Provides @Singleton
+    fun chats(@ApplicationContext c: Context, dao: dev.jarvis.data.db.CapturedMessageDao, json: Json) =
+        dev.jarvis.messaging.ChatsConnector(dao, json, granted = { dev.jarvis.messaging.JarvisNotificationListener.enabled(c) })
+
+    @Provides @Singleton
+    fun sendCoordinator() = dev.jarvis.messaging.SendCoordinator()
+
+    @Provides @Singleton
+    fun messenger(
+        @ApplicationContext c: Context, contacts: dev.jarvis.messaging.Contacts, captured: dev.jarvis.data.db.CapturedMessageDao,
+        coordinator: dev.jarvis.messaging.SendCoordinator, sent: dev.jarvis.data.db.SentMessageDao, audit: AuditLog,
+        settings: SettingsRepository, biometric: AndroidBiometricAvailability,
+    ) = dev.jarvis.messaging.Messenger(
+        finder = dev.jarvis.messaging.AndroidRecipientFinder(contacts, captured),
+        senders = mapOf(
+            dev.jarvis.messaging.Channel.SMS to dev.jarvis.messaging.SmsSender(c),
+            dev.jarvis.messaging.Channel.CHAT to dev.jarvis.messaging.ReplySender(c),
+        ),
+        coordinator = coordinator, sent = sent, audit = audit,
+        settings = {
+            val s = settings.current()
+            dev.jarvis.messaging.MessagingSettings(
+                sendingEnabled = s.sendingEnabled,
+                trusted = s.trustedContacts.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+                maxPerHour = s.maxMessagesPerHour,
+            )
+        },
+        deviceLocked = { biometric.deviceLocked() },
+    )
+
+    @Provides @Singleton
+    fun consentCoordinator() = dev.jarvis.agent.ConsentCoordinator()
+
+    /** Consent for the on-screen agent: the first send of each feature is previewed in a dialog. */
+    @Provides @Singleton
+    fun consentGate(settings: SettingsRepository, coordinator: dev.jarvis.agent.ConsentCoordinator): dev.jarvis.agent.ConsentGate =
+        object : dev.jarvis.agent.ConsentGate {
+            override suspend fun allowed(group: dev.jarvis.agent.ToolGroup) =
+                group in dev.jarvis.agent.ConsentFeatures.decode(settings.current().claudeConsent)
+
+            override suspend fun confirmFirstSend(group: dev.jarvis.agent.ToolGroup, preview: String): Boolean {
+                val seen = dev.jarvis.agent.ConsentFeatures.decode(settings.current().consentPreviewed)
+                if (group in seen) return true
+                if (!coordinator.ask(group, preview)) return false
+                settings.setConsentPreviewed(dev.jarvis.agent.ConsentFeatures.encode(seen + group))
+                return true
+            }
+        }
+
+    @Provides @Singleton
+    fun connectors(
+        indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
+        calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
+        recordings: dev.jarvis.connectors.phone.RecordingsConnector, sms: dev.jarvis.messaging.SmsConnector,
+        chats: dev.jarvis.messaging.ChatsConnector,
+    ): Map<String, @JvmSuppressWildcards Connector> =
+        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings, sms, chats).associateBy { it.id }
+
+    private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
+        androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
 
     @Provides @Singleton
     fun sessionManager() = SessionManager()
@@ -178,7 +312,6 @@ object AppModule {
         VoicePinEngine(
             models, secrets,
             micSource = { settings.current().wakeMicSource },
-            requireVoiceMatch = { settings.current().voiceMatchForPin },
             onDeviceRecognizer = { pcm -> stt.transcribeOnDeviceOnly(pcm) },
         )
 
@@ -204,8 +337,10 @@ object AppModule {
         access = HeadlessAccess(
             auth, sessions, { settings.current().security.sessions }, { device.deviceLocked() },
             spokenPinReady = { settings.current().speakReplies && voicePin.ready() && !pin.isLocked() },
+            trustUnlocked = { settings.current().trustUnlockedPhone },
         ),
         snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
+        debugLog = shapeLog, recipes = ClaudeRecipeWriter(llm),
     )
 
     /** Battery level and charging state from the system (no permission needed). */
@@ -240,6 +375,7 @@ object AppModule {
         settings = { settings.current().security },
         sessions = sessions, pin = pin, biometric = biometric, audit = audit,
         notifier = AndroidLockoutNotifier(c),
+        deviceUnlocked = { !biometric.deviceLocked() },
     )
 
     @Provides @Singleton
@@ -251,8 +387,19 @@ object AppModule {
         snapshots: SnapshotStore,
         audit: AuditLog,
         @ApplicationContext c: Context,
+        messenger: dev.jarvis.messaging.Messenger,
+        consent: dev.jarvis.agent.ConsentGate,
     ) = AgentLoop(
         llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
-        requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
+        requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) }, debugLog = shapeLog,
+        recipes = ClaudeRecipeWriter(llm),
+        // Only the on-screen agent can send: the confirmation needs the screen (hands-free sending is off for now).
+        sendMessage = { input -> messenger.handle(input) },
+        // Consent sends need the preview dialog, so only the on-screen agent has them.
+        consent = consent,
     )
+
+    /** Debug builds only: result shapes (field names, never values) for writing on-phone templates. */
+    private val shapeLog: ((String) -> Unit)? =
+        if (dev.jarvis.BuildConfig.DEBUG) { msg -> android.util.Log.d("JarvisShape", msg) } else null
 }

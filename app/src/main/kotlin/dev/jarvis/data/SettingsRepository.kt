@@ -57,8 +57,19 @@ data class AppSettings(
     val preferOnDeviceStt: Boolean = true,
     /** Text-to-speech rate, 1.0 = normal. */
     val speechRate: Float = 1.0f,
-    /** Spoken PIN also checks it's the owner's voice. Off by default (the user's choice, 2026-11-21). */
-    val voiceMatchForPin: Boolean = false,
+    /** No "PIN or fingerprint?" for personal/sensitive reads while the phone is unlocked (D33). */
+    val trustUnlockedPhone: Boolean = true,
+    /** Messaging "stop everything" switch (CLAUDE.md section 7). */
+    val sendingEnabled: Boolean = true,
+    /** Trusted contacts, comma separated: only they can be approved by saying "send it". */
+    val trustedContacts: String = "",
+    val maxMessagesPerHour: Int = 20,
+    /** Blocks every personal-data read (D29 step 6). */
+    val privateMode: Boolean = false,
+    /** Features whose data may go to Claude, redacted (ToolGroup names). Default: none. */
+    val claudeConsent: String = "",
+    /** Features whose first redacted send the user has already previewed and approved. */
+    val consentPreviewed: String = "",
     /** Always-on "Hey Jarvis" listening (foreground service). Off by default. */
     val wakeWordEnabled: Boolean = false,
     val wakeSensitivity: WakeSensitivity = WakeSensitivity.NORMAL,
@@ -71,6 +82,8 @@ data class AppSettings(
     val wakeAck: dev.jarvis.voice.WakeAck = dev.jarvis.voice.WakeAck.CHIME,
     val wakeAckPhrase: String = "Yes?",
     val onboarding: Map<OnboardingStep, StepStatus> = OnboardingStep.entries.associateWith { StepStatus.TODO },
+    /** Gmail privacy filter (D29): senders never cached or shown, comma separated. Banks by default. */
+    val emailExcludedSenders: String = dev.jarvis.connectors.google.EmailFilter.DEFAULT_EXCLUDED_SENDERS.joinToString(", "),
 ) {
     val onboardingComplete: Boolean get() = onboarding.values.none { it == StepStatus.TODO }
 
@@ -79,6 +92,7 @@ data class AppSettings(
             level = policyLevel,
             rules = toolRules,
             sessions = SessionPolicy(personalSessionMinutes * 60_000L, sensitiveSessionMinutes * 60_000L),
+            trustUnlockedPhone = trustUnlockedPhone,
         )
 
     companion object {
@@ -98,6 +112,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             monthlyBudgetUsd = p[BUDGET] ?: AppSettings.DEFAULT_BUDGET_USD,
             stopAtBudget = p[STOP_AT_BUDGET] ?: true,
             snapshotMaxAgeMinutes = p[SNAPSHOT_MINUTES] ?: AppSettings.DEFAULT_SNAPSHOT_MINUTES,
+            emailExcludedSenders = p[EMAIL_EXCLUDED_SENDERS] ?: AppSettings().emailExcludedSenders,
             policyLevel = p[POLICY_LEVEL]?.let { runCatching { PolicyLevel.valueOf(it) }.getOrNull() } ?: PolicyLevel.SMART,
             toolRules = ToolPolicy.decode(p[TOOL_RULES]),
             personalSessionMinutes = p[PERSONAL_MINUTES] ?: 5,
@@ -105,7 +120,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             speakReplies = p[SPEAK_REPLIES] ?: true,
             preferOnDeviceStt = p[ON_DEVICE_STT] ?: true,
             speechRate = p[SPEECH_RATE] ?: 1.0f,
-            voiceMatchForPin = p[VOICE_MATCH_PIN] ?: false,
+            trustUnlockedPhone = p[TRUST_UNLOCKED] ?: true,
+            sendingEnabled = p[SENDING_ENABLED] ?: true,
+            trustedContacts = p[TRUSTED_CONTACTS] ?: "",
+            maxMessagesPerHour = p[MAX_PER_HOUR] ?: 20,
+            privateMode = p[PRIVATE_MODE] ?: false,
+            claudeConsent = p[CLAUDE_CONSENT] ?: "",
+            consentPreviewed = p[CONSENT_PREVIEWED] ?: "",
             wakeWordEnabled = p[WAKE_WORD] ?: false,
             wakeSensitivity = p[WAKE_SENSITIVITY]?.let { runCatching { WakeSensitivity.valueOf(it) }.getOrNull() } ?: WakeSensitivity.NORMAL,
             wakeMicSource = p[WAKE_MIC]?.let { runCatching { MicSource.valueOf(it) }.getOrNull() } ?: MicSource.STANDARD,
@@ -128,6 +149,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setMonthlyBudget(usd: Double) = store.edit { it[BUDGET] = usd.coerceAtLeast(0.0) }
     suspend fun setStopAtBudget(v: Boolean) = store.edit { it[STOP_AT_BUDGET] = v }
     suspend fun setSnapshotMaxAgeMinutes(v: Int) = store.edit { it[SNAPSHOT_MINUTES] = v.coerceIn(0, 24 * 60) }
+    suspend fun setEmailExcludedSenders(v: String) = store.edit { it[EMAIL_EXCLUDED_SENDERS] = v.take(2000) }
     suspend fun setPolicyLevel(v: PolicyLevel) = store.edit { it[POLICY_LEVEL] = v.name }
     suspend fun setToolRule(tool: String, rule: ToolRule) = store.edit { p ->
         val rules = ToolPolicy.decode(p[TOOL_RULES]).toMutableMap().apply { if (rule == ToolRule.DEFAULT) remove(tool) else put(tool, rule) }
@@ -141,7 +163,12 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setSpeakReplies(v: Boolean) = store.edit { it[SPEAK_REPLIES] = v }
     suspend fun setPreferOnDeviceStt(v: Boolean) = store.edit { it[ON_DEVICE_STT] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[SPEECH_RATE] = v.coerceIn(0.5f, 2f) }
-    suspend fun setVoiceMatchForPin(v: Boolean) = store.edit { it[VOICE_MATCH_PIN] = v }
+    suspend fun setTrustUnlockedPhone(v: Boolean) = store.edit { it[TRUST_UNLOCKED] = v }
+    suspend fun setSendingEnabled(v: Boolean) = store.edit { it[SENDING_ENABLED] = v }
+    suspend fun setTrustedContacts(v: String) = store.edit { it[TRUSTED_CONTACTS] = v.take(1000) }
+    suspend fun setPrivateMode(v: Boolean) = store.edit { it[PRIVATE_MODE] = v }
+    suspend fun setClaudeConsent(v: String) = store.edit { it[CLAUDE_CONSENT] = v; if (v.isEmpty()) it[CONSENT_PREVIEWED] = "" }
+    suspend fun setConsentPreviewed(v: String) = store.edit { it[CONSENT_PREVIEWED] = v }
     suspend fun setWakeWordEnabled(v: Boolean) = store.edit { it[WAKE_WORD] = v }
     suspend fun setWakeSensitivity(v: WakeSensitivity) = store.edit { it[WAKE_SENSITIVITY] = v.name }
     suspend fun setWakeMicSource(v: MicSource) = store.edit { it[WAKE_MIC] = v.name }
@@ -159,6 +186,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val BUDGET = doublePreferencesKey("monthly_budget_usd")
         val STOP_AT_BUDGET = booleanPreferencesKey("stop_at_budget")
         val SNAPSHOT_MINUTES = intPreferencesKey("snapshot_max_age_minutes")
+        val EMAIL_EXCLUDED_SENDERS = stringPreferencesKey("email_excluded_senders")
         val POLICY_LEVEL = stringPreferencesKey("policy_level")
         val TOOL_RULES = stringPreferencesKey("tool_rules")
         val PERSONAL_MINUTES = intPreferencesKey("session_personal_minutes")
@@ -166,7 +194,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val SPEAK_REPLIES = booleanPreferencesKey("speak_replies")
         val ON_DEVICE_STT = booleanPreferencesKey("prefer_on_device_stt")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
-        val VOICE_MATCH_PIN = androidx.datastore.preferences.core.booleanPreferencesKey("voice_match_pin")
+        val TRUST_UNLOCKED = androidx.datastore.preferences.core.booleanPreferencesKey("trust_unlocked_phone")
+        val SENDING_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("sending_enabled")
+        val TRUSTED_CONTACTS = stringPreferencesKey("trusted_contacts")
+        val MAX_PER_HOUR = intPreferencesKey("max_messages_per_hour")
+        val PRIVATE_MODE = androidx.datastore.preferences.core.booleanPreferencesKey("private_mode")
+        val CLAUDE_CONSENT = stringPreferencesKey("claude_consent")
+        val CONSENT_PREVIEWED = stringPreferencesKey("consent_previewed")
         val WAKE_WORD = booleanPreferencesKey("wake_word_enabled")
         val WAKE_SENSITIVITY = stringPreferencesKey("wake_sensitivity")
         val WAKE_MIC = stringPreferencesKey("wake_mic_source")

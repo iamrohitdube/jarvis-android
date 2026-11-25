@@ -7,7 +7,6 @@ import dev.jarvis.claude.AssembledMessage
 import dev.jarvis.claude.LlmClient
 import dev.jarvis.claude.LlmEvent
 import dev.jarvis.claude.LlmRequest
-import dev.jarvis.claude.McpServerConfig
 import dev.jarvis.claude.StreamUpdate
 import dev.jarvis.claude.Usage
 import dev.jarvis.connectors.Connector
@@ -189,6 +188,15 @@ class HeadlessAccessTest {
         assertTrue(access.authorize(listOf(netWorth), null) is AccessResult.Granted)
         assertEquals(1, delegateCalls)
     }
+
+
+    @Test fun unlockedPhoneWithTrustReachesTheGateWithoutASession() = runBlocking {
+        val trusting = HeadlessAccess(delegate, sessions, { SessionPolicy() }, { locked }, trustUnlocked = { true })
+        assertTrue(trusting.authorize(listOf(netWorth), null) is AccessResult.Granted)
+        assertEquals(1, delegateCalls)
+        locked = true // pocket / lock screen: back to spoken PIN or the screen
+        assertEquals(DenyReason.NEEDS_SCREEN, (trusting.authorize(listOf(netWorth), null) as AccessResult.Denied).reason)
+    }
 }
 
 /** Each listen plays the next scripted session; after the script, the user says nothing. */
@@ -223,12 +231,31 @@ private class OneReplyLlm(private val text: String) : LlmClient {
     override suspend fun testKey(apiKey: String) = Result.success(Unit)
 }
 
+/** Claude's routing: the first [handBacks] questions are handed back to the phone (private_data), then plain text. */
+private class RoutingLlm(private val handBacks: Int, private val text: String) : LlmClient {
+    val requests = mutableListOf<LlmRequest>()
+    override fun stream(request: LlmRequest): Flow<LlmEvent> = flow {
+        requests += request
+        if (requests.size <= handBacks) {
+            val use = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"type":"tool_use","id":"p${requests.size}","name":"private_data","input":{"kinds":["net_worth"]}}""",
+            ) as kotlinx.serialization.json.JsonObject
+            emit(LlmEvent.Completed(AssembledMessage("claude-haiku-5-5", listOf(use), "tool_use", null, Usage(10, 5)), 20))
+        } else {
+            emit(LlmEvent.Update(StreamUpdate.TextDelta(text)))
+            emit(LlmEvent.Completed(AssembledMessage("claude-haiku-5-5", emptyList(), "end_turn", null, Usage(10, 5)), 20))
+        }
+    }
+    override suspend fun testKey(apiKey: String) = Result.success(Unit)
+}
+
 private object SignedInIndMoney : Connector {
     override val id = ToolRegistry.INDMONEY
     override val displayName = "INDmoney"
     override val status = flowOf(ConnectorStatus.Connected)
-    override suspend fun mcpServer() = McpServerConfig(id, "https://example/mcp", "tok")
-    override suspend fun onAuthRejected() = true
+    override suspend fun callTool(name: String, arguments: kotlinx.serialization.json.JsonObject) =
+        dev.jarvis.connectors.ConnectorCall.Ok("""{"networth":1240000}""", toolError = false)
+    override suspend fun toolDefinitions(names: Collection<String>) = emptyList<dev.jarvis.connectors.McpToolDef>()
     override suspend fun test() = ConnectorTestResult.Ok
     override suspend fun signOut() = Unit
 }
@@ -305,9 +332,9 @@ class VoiceConversationTest {
         }
     }
 
-    @Test fun privateQuestionInAPocketIsRefusedWithoutCallingClaude() = runBlocking {
+    @Test fun privateQuestionInAPocketIsRefusedOnThePhone() = runBlocking {
         val tts = RecordingTts()
-        val llm = OneReplyLlm("should not happen")
+        val llm = RoutingLlm(handBacks = 1, text = "should not happen")
         val headless = HeadlessAccess(
             AccessController { t, _ -> AccessResult.Granted(t, null, false, true) },
             SessionManager(), { SessionPolicy() }, { true },
@@ -317,8 +344,29 @@ class VoiceConversationTest {
 
         conversation.runOnce(this)
 
-        assertTrue(llm.requests.isEmpty())
+        assertEquals(1, llm.requests.size) // Claude only routed it
         assertEquals(listOf(VoiceConversation.NEEDS_SCREEN_LINE), tts.spoken)
+    }
+
+    @Test fun portfolioAnswerIsNeverSentAsContextToClaude() = runBlocking {
+        val tts = RecordingTts()
+        val llm = RoutingLlm(handBacks = 1, text = "Paris. ")
+        val agent = AgentLoop(
+            llm, mapOf(ToolRegistry.INDMONEY to SignedInIndMoney), tempUsageMeter(db),
+            AccessController { t, _ -> AccessResult.Granted(t, dev.jarvis.security.AuthMethod.PIN, false, true) },
+        )
+        val stt = ScriptedStt(
+            listOf(SttEvent.Final("what's my net worth")),
+            listOf(SttEvent.Final("what's the capital of France")),
+            listOf(SttEvent.Final("thanks")),
+        )
+        VoiceConversation(stt, tts, agent, history, settings) { false }.runOnce(this)
+
+        assertEquals(2, llm.requests.size) // a routing call per question; the net worth itself was made on the phone
+        assertTrue(tts.spoken.first().contains("12.4 lakh"))
+        val sent = llm.requests.joinToString { it.body["messages"].toString() }
+        assertFalse(sent, sent.contains("lakh") || sent.contains("1240000"))
+        assertTrue(llm.requests[1].body["messages"].toString().contains(dev.jarvis.agent.AgentLoop.PRIVATE_ANSWER))
     }
 
     @Test fun silenceEndsQuietly() = runBlocking {

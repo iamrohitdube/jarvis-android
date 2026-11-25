@@ -182,6 +182,7 @@ dependencies {
     implementation(libs.litert)
     implementation(libs.androidx.splashscreen)
     implementation(libs.room.runtime)
+    implementation(libs.play.services.auth)
     ksp(libs.room.compiler)
 
     testImplementation(libs.junit)
