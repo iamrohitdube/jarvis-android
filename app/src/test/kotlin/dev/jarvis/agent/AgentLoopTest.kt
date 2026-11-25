@@ -531,4 +531,25 @@ class AgentLoopTest {
             done.text,
         )
     }
+
+    // ---- Sending (CLAUDE.md section 7) ----
+
+    @Test fun sendMessageIsHandedToThePhoneFlow() = runBlocking {
+        var got: JsonObject? = null
+        val llm = FakeLlm({ reply("", stop = "tool_use", content = listOf(toolUse("s1", SendMessageTool.NAME, """{"to":"Mom","text":"I'll be late"}"""))) })
+        val agent = AgentLoop(llm, emptyMap(), meter, allowAll, sendMessage = { input -> got = input; "Sent to Mom." })
+        val done = agent.run(emptyList(), "text mom I'll be late", settings).toList().last() as AgentEvent.Finished
+        assertEquals("Sent to Mom.", done.text)
+        assertTrue(done.personal) // the draft isn't resent to Claude as history
+        assertEquals("Mom", got!!["to"]!!.jsonPrimitive.content)
+        // Claude was offered the tool; only one Claude call (the phone did the rest).
+        assertEquals(1, llm.requests.size)
+        assertTrue(llm.requests[0].body["tools"].toString().contains(SendMessageTool.NAME))
+    }
+
+    @Test fun withoutASenderTheToolIsNotOffered() = runBlocking {
+        val llm = FakeLlm({ reply("Hi.") })
+        AgentLoop(llm, emptyMap(), meter, allowAll).run(emptyList(), "hi", settings).toList()
+        assertFalse(llm.requests[0].body["tools"].toString().contains(SendMessageTool.NAME))
+    }
 }

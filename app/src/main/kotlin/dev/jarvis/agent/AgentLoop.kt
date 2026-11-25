@@ -102,6 +102,8 @@ class AgentLoop(
     private val debugLog: ((String) -> Unit)? = null,
     /** Recipe answers (D32): Claude writes the reply from the data's outline, the phone fills in values. Null = templates only. */
     private val recipes: RecipeWriter? = null,
+    /** Sends a message Claude drafted, after the phone's confirmation flow (CLAUDE.md section 7). Null = no sending. */
+    private val sendMessage: (suspend (JsonObject?) -> String)? = null,
 ) {
     fun run(history: List<ChatTurn>, userText: String, settings: AppSettings): Flow<AgentEvent> = flow {
         // Simple questions the phone can answer itself: no request to Claude (instant, free).
@@ -141,6 +143,7 @@ class AgentLoop(
         }
         // Offered whenever the phone has a personal connector (connected or not: the phone then says how to sign in).
         if (connectors.isNotEmpty()) toolDefs += PrivateDataTool.definition
+        if (sendMessage != null) toolDefs += SendMessageTool.definition
         val runnable = toolDefs.map { it.name }.filter { it != PrivateDataTool.NAME }.toSet()
         emit(AgentEvent.Routed(route.model, emptyList()))
 
@@ -156,6 +159,7 @@ class AgentLoop(
         var toolRounds = 0
         var outcome = "cancelled"
         var handoff: JsonObject? = null
+        var sendUse: JsonObject? = null
         var offline = false
         val started = clock()
 
@@ -184,6 +188,12 @@ class AgentLoop(
                 if (msg.stopReason == "tool_use" && handoffUse != null) {
                     handoff = handoffUse
                     outcome = "handoff"
+                    break
+                }
+                val send = msg.content.firstOrNull { it.str("type") == "tool_use" && it.str("name") == SendMessageTool.NAME }
+                if (msg.stopReason == "tool_use" && send != null && sendMessage != null) {
+                    sendUse = send
+                    outcome = "send_handoff"
                     break
                 }
                 if (msg.stopReason == "tool_use" && toolRounds < MAX_TOOL_ROUNDS) {
@@ -259,6 +269,14 @@ class AgentLoop(
 
         if (offline) {
             personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question), allowRecipe = false)
+            return@flow
+        }
+        // Claude drafted a message: the phone's confirmation flow decides whether it is sent.
+        sendUse?.let { use ->
+            emit(AgentEvent.ToolActivity(SendMessageTool.NAME))
+            val reply = sendMessage!!(use["input"] as? JsonObject)
+            emit(AgentEvent.TextDelta(reply))
+            emit(AgentEvent.Finished(reply, usage, costUsd = Pricing.cost(model, usage), truncated = false, model = model, personal = true))
             return@flow
         }
         // Claude judged this needs the user's own data: the phone takes over, behind the security gate.

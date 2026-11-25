@@ -38,12 +38,16 @@ object PrivateDataTool {
         CALLS_WITH("calls_with", listOf("calls_with")),
         RECORDINGS_RECENT("recordings_recent", listOf("recordings_recent")),
         RECORDINGS_SEARCH("recordings_search", listOf("recordings_search")),
+        SMS_RECENT("sms_recent", listOf("sms_recent")),
+        SMS_FROM("sms_from", listOf("sms_from")),
+        CHATS_RECENT("chats_recent", listOf("chats_recent")),
+        CHATS_FROM("chats_from", listOf("chats_from")),
     }
 
     val definition = McpToolDef(
         name = NAME,
         description = "Hand the question to the user's phone when answering needs the user's OWN data: their money, " +
-            "email, calendar, Drive files or calls. The phone answers the user privately and you will NOT see the result, so call it without " +
+            "email, calendar, Drive files, calls or messages. The phone answers the user privately and you will NOT see the result, so call it without " +
             "writing any text first, and never guess or invent the user's numbers or emails. Kinds: net_worth (total, " +
             "invested, returns, profit or loss overall, allocation, liabilities); bank_balance (bank, savings, cash, " +
             "deposits); holdings (the stocks or funds they own, a single holding's value or P&L); sips (their SIPs, " +
@@ -54,7 +58,9 @@ object PrivateDataTool {
             "edited lately); drive_search (find a Drive file: put a word from its name in item); calls_recent " +
             "(recent calls, who called); calls_missed (missed calls); calls_with (calls with one person: put the " +
             "name or number in item; also how long they talked); recordings_recent (latest call recordings); " +
-            "recordings_search (what was said in a recorded call: put the topic, or the person and topic, in item). " +
+            "recordings_search (what was said in a recorded call: put the topic, or the person and topic, in item); " +
+            "sms_recent (latest texts); sms_from (texts from someone: name or number in item); chats_recent (recent " +
+            "WhatsApp/Telegram/chat messages); chats_from (chat messages from a person or group: name in item). " +
             "Pass several kinds " +
             "if the question covers several. For one specific stock or fund they own, pass its name as item. Don't " +
             "use it for public market questions (prices, fund facts) or general questions.",

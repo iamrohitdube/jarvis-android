@@ -59,6 +59,11 @@ data class AppSettings(
     val speechRate: Float = 1.0f,
     /** No "PIN or fingerprint?" for personal/sensitive reads while the phone is unlocked (D33). */
     val trustUnlockedPhone: Boolean = true,
+    /** Messaging "stop everything" switch (CLAUDE.md section 7). */
+    val sendingEnabled: Boolean = true,
+    /** Trusted contacts, comma separated: only they can be approved by saying "send it". */
+    val trustedContacts: String = "",
+    val maxMessagesPerHour: Int = 20,
     /** Always-on "Hey Jarvis" listening (foreground service). Off by default. */
     val wakeWordEnabled: Boolean = false,
     val wakeSensitivity: WakeSensitivity = WakeSensitivity.NORMAL,
@@ -110,6 +115,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             preferOnDeviceStt = p[ON_DEVICE_STT] ?: true,
             speechRate = p[SPEECH_RATE] ?: 1.0f,
             trustUnlockedPhone = p[TRUST_UNLOCKED] ?: true,
+            sendingEnabled = p[SENDING_ENABLED] ?: true,
+            trustedContacts = p[TRUSTED_CONTACTS] ?: "",
+            maxMessagesPerHour = p[MAX_PER_HOUR] ?: 20,
             wakeWordEnabled = p[WAKE_WORD] ?: false,
             wakeSensitivity = p[WAKE_SENSITIVITY]?.let { runCatching { WakeSensitivity.valueOf(it) }.getOrNull() } ?: WakeSensitivity.NORMAL,
             wakeMicSource = p[WAKE_MIC]?.let { runCatching { MicSource.valueOf(it) }.getOrNull() } ?: MicSource.STANDARD,
@@ -147,6 +155,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setPreferOnDeviceStt(v: Boolean) = store.edit { it[ON_DEVICE_STT] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[SPEECH_RATE] = v.coerceIn(0.5f, 2f) }
     suspend fun setTrustUnlockedPhone(v: Boolean) = store.edit { it[TRUST_UNLOCKED] = v }
+    suspend fun setSendingEnabled(v: Boolean) = store.edit { it[SENDING_ENABLED] = v }
+    suspend fun setTrustedContacts(v: String) = store.edit { it[TRUSTED_CONTACTS] = v.take(1000) }
     suspend fun setWakeWordEnabled(v: Boolean) = store.edit { it[WAKE_WORD] = v }
     suspend fun setWakeSensitivity(v: WakeSensitivity) = store.edit { it[WAKE_SENSITIVITY] = v.name }
     suspend fun setWakeMicSource(v: MicSource) = store.edit { it[WAKE_MIC] = v.name }
@@ -173,6 +183,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val ON_DEVICE_STT = booleanPreferencesKey("prefer_on_device_stt")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
         val TRUST_UNLOCKED = androidx.datastore.preferences.core.booleanPreferencesKey("trust_unlocked_phone")
+        val SENDING_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("sending_enabled")
+        val TRUSTED_CONTACTS = stringPreferencesKey("trusted_contacts")
+        val MAX_PER_HOUR = intPreferencesKey("max_messages_per_hour")
         val WAKE_WORD = booleanPreferencesKey("wake_word_enabled")
         val WAKE_SENSITIVITY = stringPreferencesKey("wake_sensitivity")
         val WAKE_MIC = stringPreferencesKey("wake_mic_source")

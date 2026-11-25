@@ -42,6 +42,7 @@ class SettingsViewModel @Inject constructor(
     private val connectors: Map<String, @JvmSuppressWildcards dev.jarvis.connectors.Connector>,
     private val recordingIndexer: dev.jarvis.connectors.phone.RecordingIndexer,
     private val transcripts: dev.jarvis.data.db.TranscriptDao,
+    sentMessages: dev.jarvis.data.db.SentMessageDao,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val gmail: dev.jarvis.connectors.google.GmailConnector,
     private val drive: dev.jarvis.connectors.google.DriveConnector,
@@ -351,6 +352,17 @@ class SettingsViewModel @Inject constructor(
 
     /** After a permission dialog (or returning from Android settings). */
     fun refreshLocalSources() = localSources.forEach { it.refreshStatus() }
+
+    // ---- Messaging (CLAUDE.md section 7) ----
+    val sentLog: StateFlow<List<dev.jarvis.data.db.SentMessageEntity>> =
+        sentMessages.recent(10).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun setSendingEnabled(v: Boolean) = viewModelScope.launch {
+        repo.setSendingEnabled(v)
+        audit.record(AuditEvent(AuditCategory.TOOL, "sending_switch", if (v) "on" else "off"))
+    }
+
+    fun setTrustedContacts(v: String) = viewModelScope.launch { repo.setTrustedContacts(v) }
 
     // ---- Call recordings (D30) ----
     val transcribedCount: StateFlow<Int> = transcripts.doneCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)

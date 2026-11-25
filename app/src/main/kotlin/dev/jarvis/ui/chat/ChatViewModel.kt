@@ -94,6 +94,7 @@ class ChatViewModel @Inject constructor(
     private val wakeBus: WakeBus,
     voicePinEngine: VoicePinEngine,
     usageMeter: UsageMeter,
+    private val sendCoordinator: dev.jarvis.messaging.SendCoordinator,
 ) : ViewModel() {
 
     /** Push-to-talk pipeline: mic -> STT -> agent -> sentence-by-sentence TTS (CLAUDE.md section 8). */
@@ -165,6 +166,24 @@ class ChatViewModel @Inject constructor(
             }
         }
         viewModelScope.launch { auth.prompt.collect { p -> voicePin.onPrompt(p, voice.voiceTurn) } }
+        // In a voice turn, read the FULL draft aloud and listen for "send it" (CLAUDE.md section 7).
+        viewModelScope.launch {
+            var asked = -1L
+            sendCoordinator.prompt.collect { p ->
+                if (p?.stage == dev.jarvis.messaging.SendPrompt.Stage.CONFIRM && p.id != asked && voice.voiceTurn) {
+                    asked = p.id
+                    val channel = if (p.recipient.channel == dev.jarvis.messaging.Channel.SMS) "SMS" else p.recipient.detail + " message"
+                    val how = if (p.voiceAllowed) "Say send it to send." else "Tap Send it on the screen to send."
+                    voice.ask("$channel to ${p.recipient.name}: ${p.text}. $how") { answer ->
+                        when {
+                            dev.jarvis.messaging.SendPhrase.approves(answer) -> sendCoordinator.approve(byVoice = true)
+                            dev.jarvis.messaging.SendPhrase.cancels(answer) -> sendCoordinator.cancel()
+                            else -> Unit // unclear or silence: nothing is sent
+                        }
+                    }
+                }
+            }
+        }
         // Whatever is visible while unlocked stays revealed afterwards (until an explicit "lock").
         viewModelScope.launch {
             combine(persisted, unlocked) { a, b -> a to b }.collect { (rows, open) ->
@@ -341,6 +360,7 @@ class ChatViewModel @Inject constructor(
 
     private fun toolLabel(name: String): String {
         if (name == dev.jarvis.agent.AgentLoop.RECIPE_ACTIVITY) return "Working it out…"
+        if (name == dev.jarvis.agent.SendMessageTool.NAME) return "Preparing the message…"
         val spec = ToolRegistry.byName(name)
         return when (spec?.connectorId) {
             ToolRegistry.INDMONEY -> "Checking INDmoney…"

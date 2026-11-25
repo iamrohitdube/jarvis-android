@@ -142,6 +142,7 @@ class WakeViewModel @Inject constructor(
 @AndroidEntryPoint
 class WakeActivity : ComponentActivity() {
     @Inject lateinit var auth: AuthCoordinator
+    @Inject lateinit var sendCoordinator: dev.jarvis.messaging.SendCoordinator
     @Inject lateinit var bus: WakeBus
     @Inject lateinit var biometric: AndroidBiometricAvailability
     private val vm: WakeViewModel by viewModels()
@@ -204,6 +205,7 @@ class WakeActivity : ComponentActivity() {
                     )
                 }
                 AuthHost(auth)
+                dev.jarvis.ui.security.SendHost(sendCoordinator)
             }
         }
     }

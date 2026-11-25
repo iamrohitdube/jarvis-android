@@ -46,9 +46,11 @@ object ToolRegistry {
     const val DRIVE = "drive"
     const val CALLS = "calls"
     const val RECORDINGS = "recordings"
+    const val SMS = "sms"
+    const val CHATS = "notifications"
 
     /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
-    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, RECORDINGS, "sms", "notifications")
+    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, RECORDINGS, SMS, CHATS)
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
@@ -96,6 +98,11 @@ object ToolRegistry {
         // Call recordings (D30): on-phone transcripts of what the dialer recorded. Tier 1.
         local(RECORDINGS, ToolGroup.CALLS, "recordings_recent", "Latest transcribed call recordings", listOf("call recordings", "recorded calls"), snapshot = true),
         local(RECORDINGS, ToolGroup.CALLS, "recordings_search", "Calls whose recording mentions something", listOf("in the call", "on the call", "said on"), itemArg = "query"),
+        // Messaging (D29 step 8): SMS inbox and chat notifications, read on the phone. Tier 1.
+        local(SMS, ToolGroup.MESSAGING, "sms_recent", "Latest texts (SMS)", listOf("my texts", "my sms", "new sms", "text messages"), groupDefault = true, snapshot = true),
+        local(SMS, ToolGroup.MESSAGING, "sms_from", "Texts from one person or number", listOf("sms from", "texts from", "text from"), itemArg = "query"),
+        local(CHATS, ToolGroup.MESSAGING, "chats_recent", "Recent WhatsApp/Telegram/chat messages", listOf("whatsapp", "telegram", "chat messages", "new messages"), snapshot = true),
+        local(CHATS, ToolGroup.MESSAGING, "chats_from", "Chat messages from one person or group", listOf("messages from", "whatsapp from"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
@@ -110,6 +117,7 @@ object ToolRegistry {
         ToolGroup.CALENDAR to listOf("my calendar", "my schedule", "my meetings", "my agenda"),
         ToolGroup.FILES to listOf("google drive", "my drive", "my files", "my documents"),
         ToolGroup.CALLS to listOf("my calls", "call log", "phone calls"),
+        ToolGroup.MESSAGING to listOf("my messages", "my texts", "whatsapp", "sms"),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }

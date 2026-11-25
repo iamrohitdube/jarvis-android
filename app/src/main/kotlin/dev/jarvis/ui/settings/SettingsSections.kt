@@ -244,6 +244,37 @@ fun DriveSection(vm: SettingsViewModel) {
     }
 }
 
+/** Messaging (CLAUDE.md section 7): the off switch, trusted contacts, and the log of every send. */
+@Composable
+fun MessagingSection(vm: SettingsViewModel) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val log by vm.sentLog.collectAsStateWithLifecycle()
+    val settings = s ?: return
+    var trusted by remember(settings.trustedContacts) { mutableStateOf(settings.trustedContacts) }
+    SettingsCard("Messaging", AppIcons.Send, subtitle = "Texts and chat replies, always confirmed by you", tint = MaterialTheme.colorScheme.tertiary) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Allow sending", style = MaterialTheme.typography.bodyLarge)
+                Hint("Off = JARVIS never sends anything. On = every message shows the full text and waits for \"send it\", then 5 seconds to cancel.")
+            }
+            androidx.compose.material3.Switch(checked = settings.sendingEnabled, onCheckedChange = vm::setSendingEnabled)
+        }
+        Hint("Trusted contacts (comma separated) can be confirmed by voice. Anyone else needs a tap on the screen.")
+        androidx.compose.material3.OutlinedTextField(
+            trusted, { trusted = it }, label = { Text("Trusted contacts") },
+            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(onClick = { vm.setTrustedContacts(trusted) }, enabled = trusted != settings.trustedContacts) { Text("Save") }
+        Hint("At most ${settings.maxMessagesPerHour} messages an hour. Replies to WhatsApp and other chat apps work only while their message notification is showing.")
+        if (log.isNotEmpty()) {
+            Text("Recent", style = MaterialTheme.typography.titleSmall)
+            log.take(5).forEach { m ->
+                Hint("${m.outcome} · ${m.channel} to ${m.recipient}: \"${m.text.take(60)}\"")
+            }
+        }
+    }
+}
+
 /** Call recordings (D30): pick the dialer's recordings folder, then transcribe on the phone. */
 @Composable
 fun RecordingsSection(vm: SettingsViewModel) {
@@ -309,6 +340,20 @@ fun PhoneDataSection(vm: SettingsViewModel) {
                 }
                 if (ok) StatusChip("Allowed", ChipTone.GOOD)
                 else OutlinedButton(onClick = { launcher.launch(source.permissions.toTypedArray()) }) { Text("Allow") }
+            }
+        }
+        // Chat messages need Android's notification access (a settings screen, not a permission dialog).
+        vm.localSources.firstOrNull { it.id == dev.jarvis.agent.ToolRegistry.CHATS }?.let { chats ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(chats.displayName, style = MaterialTheme.typography.bodyLarge)
+                    Hint(chats.purpose + " Turn on \"JARVIS chat messages\" in notification access.")
+                }
+                if (status[chats.id] == ConnectorStatus.Connected) StatusChip("Allowed", ChipTone.GOOD)
+                else OutlinedButton(onClick = {
+                    runCatching { context.startActivity(dev.jarvis.messaging.JarvisNotificationListener.settingsIntent(context)) }
+                    denied = "If Android says it's restricted: App settings → ⋮ → Allow restricted settings, then try again."
+                }) { Text("Allow") }
             }
         }
         denied?.let {

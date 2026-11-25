@@ -180,6 +180,6 @@ interface SentMessageDao {
     @Query("SELECT COUNT(*) FROM sent_messages WHERE approvedAt >= :since AND outcome = 'sent'")
     suspend fun sentSince(since: Long): Int
 
-    @Query("SELECT * FROM sent_messages ORDER BY approvedAt DESC LIMIT :limit")
+    @Query("SELECT * FROM sent_messages ORDER BY approvedAt DESC, id DESC LIMIT :limit")
     fun recent(limit: Int): Flow<List<SentMessageEntity>>
 }

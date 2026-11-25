@@ -208,12 +208,50 @@ object AppModule {
         dev.jarvis.connectors.phone.RecordingsConnector(dao, indexer, json, granted = { recordingsFolder(c) != null })
 
     @Provides @Singleton
+    fun contacts(@ApplicationContext c: Context) = dev.jarvis.messaging.Contacts(c.contentResolver)
+
+    @Provides @Singleton
+    fun sms(@ApplicationContext c: Context, contacts: dev.jarvis.messaging.Contacts, json: Json) =
+        dev.jarvis.messaging.SmsConnector(c.contentResolver, contacts, json, granted = { hasPermissions(c, dev.jarvis.messaging.SmsConnector.PERMISSIONS) })
+
+    @Provides @Singleton
+    fun chats(@ApplicationContext c: Context, dao: dev.jarvis.data.db.CapturedMessageDao, json: Json) =
+        dev.jarvis.messaging.ChatsConnector(dao, json, granted = { dev.jarvis.messaging.JarvisNotificationListener.enabled(c) })
+
+    @Provides @Singleton
+    fun sendCoordinator() = dev.jarvis.messaging.SendCoordinator()
+
+    @Provides @Singleton
+    fun messenger(
+        @ApplicationContext c: Context, contacts: dev.jarvis.messaging.Contacts, captured: dev.jarvis.data.db.CapturedMessageDao,
+        coordinator: dev.jarvis.messaging.SendCoordinator, sent: dev.jarvis.data.db.SentMessageDao, audit: AuditLog,
+        settings: SettingsRepository, biometric: AndroidBiometricAvailability,
+    ) = dev.jarvis.messaging.Messenger(
+        finder = dev.jarvis.messaging.AndroidRecipientFinder(contacts, captured),
+        senders = mapOf(
+            dev.jarvis.messaging.Channel.SMS to dev.jarvis.messaging.SmsSender(c),
+            dev.jarvis.messaging.Channel.CHAT to dev.jarvis.messaging.ReplySender(c),
+        ),
+        coordinator = coordinator, sent = sent, audit = audit,
+        settings = {
+            val s = settings.current()
+            dev.jarvis.messaging.MessagingSettings(
+                sendingEnabled = s.sendingEnabled,
+                trusted = s.trustedContacts.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+                maxPerHour = s.maxMessagesPerHour,
+            )
+        },
+        deviceLocked = { biometric.deviceLocked() },
+    )
+
+    @Provides @Singleton
     fun connectors(
         indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
         calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
-        recordings: dev.jarvis.connectors.phone.RecordingsConnector,
+        recordings: dev.jarvis.connectors.phone.RecordingsConnector, sms: dev.jarvis.messaging.SmsConnector,
+        chats: dev.jarvis.messaging.ChatsConnector,
     ): Map<String, @JvmSuppressWildcards Connector> =
-        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings).associateBy { it.id }
+        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings, sms, chats).associateBy { it.id }
 
     private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
         androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -330,10 +368,13 @@ object AppModule {
         snapshots: SnapshotStore,
         audit: AuditLog,
         @ApplicationContext c: Context,
+        messenger: dev.jarvis.messaging.Messenger,
     ) = AgentLoop(
         llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
         requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) }, debugLog = shapeLog,
         recipes = ClaudeRecipeWriter(llm),
+        // Only the on-screen agent can send: the confirmation needs the screen (hands-free sending is off for now).
+        sendMessage = { input -> messenger.handle(input) },
     )
 
     /** Debug builds only: result shapes (field names, never values) for writing on-phone templates. */
