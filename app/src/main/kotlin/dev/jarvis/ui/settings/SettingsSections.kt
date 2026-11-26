@@ -163,6 +163,9 @@ fun GmailSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
         androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
     ) { result -> vm.completeGoogleSignIn(result.data, onConnectorOk) }
     var senders by remember(settings?.emailExcludedSenders) { mutableStateOf(settings?.emailExcludedSenders.orEmpty()) }
+    val sendConsent = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> vm.completeEmailSending(result.data) }
 
     SettingsCard(
         "Gmail", AppIcons.Mail,
@@ -192,6 +195,16 @@ fun GmailSection(vm: SettingsViewModel, onConnectorOk: () -> Unit = {}) {
             }
         }
         StatusMessage(message, error = message?.let { "Couldn't" in it || "failed" in it.lowercase() } == true)
+        if (status != ConnectorStatus.NotConnected) Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Send and reply by voice", style = MaterialTheme.typography.bodyLarge)
+                Hint("\"Reply to Priya's email: I'll join at 3\". Send-only access (can't read or delete). You always see the full email and say \"send it\".")
+            }
+            if (settings?.emailSendAllowed == true) StatusChip("Allowed", ChipTone.GOOD)
+            else OutlinedButton(onClick = {
+                vm.allowEmailSending { pi -> sendConsent.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()) }
+            }, enabled = !busy) { Text("Allow sending") }
+        }
         Hint("Never shown or saved: one-time codes, promotions, and these senders (comma separated):")
         androidx.compose.material3.OutlinedTextField(
             senders, { senders = it }, label = { Text("Excluded senders") },

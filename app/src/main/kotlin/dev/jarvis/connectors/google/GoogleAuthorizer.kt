@@ -26,7 +26,7 @@ interface GoogleTokenSource {
 }
 
 /** One authoriser per Google service (Gmail, Drive), for the Settings sign-in buttons. */
-class GoogleAuth(val gmail: GoogleAuthorizer, val drive: GoogleAuthorizer)
+class GoogleAuth(val gmail: GoogleAuthorizer, val drive: GoogleAuthorizer, val gmailSend: GoogleAuthorizer)
 
 /** What a sign-in attempt from the UI needs to do next. */
 sealed interface GoogleAuthorizeOutcome {
@@ -77,6 +77,8 @@ class GoogleAuthorizer(private val context: Context, private val scopes: List<St
 
     companion object {
         const val GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+        /** Send only (D36): can't read, delete or change mail. Asked for separately so reading never depends on it. */
+        const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
         const val DRIVE_METADATA_READONLY = "https://www.googleapis.com/auth/drive.metadata.readonly"
     }
 }

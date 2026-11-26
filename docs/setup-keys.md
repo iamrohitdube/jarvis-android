@@ -44,8 +44,10 @@ Google renames console menus from time to time. If a label below doesn't match, 
 5. **Data Access** → **Add or remove scopes**. Tick (or paste into "Manually add scopes"):
    - `https://www.googleapis.com/auth/gmail.readonly`
    - `https://www.googleapis.com/auth/drive.metadata.readonly`
+   - `https://www.googleapis.com/auth/gmail.send` (only if you want JARVIS to send and reply to email, D36)
 
-   **Update** → **Save**. Google marks both as *restricted*. That's expected (see 3.4).
+   **Update** → **Save**. Google marks the first two as *restricted* and `gmail.send` as *sensitive*. That's
+   expected (see 3.4). Already set up? Come back here and add `gmail.send`; nothing else changes.
 6. **Audience** → **Test users** → **Add users** → your own Gmail → **Save**.
 7. **Branding** (needed before **Publish app** in 3.4 is enabled). Leave **App logo** empty: a logo needs Google's
    review. Fill in the links (the project's pages, served by GitHub Pages from the `gh-pages` branch):
@@ -93,6 +95,10 @@ latest inbox headers, with no Claude call). **Google Drive** has its own **Sign 
 approved separately, so adding Drive later never interrupts Gmail. For Drive, make sure the **Google Drive API** is
 enabled (3.1) and the `drive.metadata.readonly` scope is added (3.2). To disconnect fully: **Sign out** on each card,
 and optionally https://myaccount.google.com/connections → JARVIS → **Delete all connections**.
+
+**Sending email (D36):** after Gmail works, the Gmail card shows **Send and reply by voice** → **Allow sending**
+→ approve. This asks only for `gmail.send` (send, not read or delete), separately from reading, so it never breaks
+Gmail reading. Every email is shown in full and needs "send it", like an SMS.
 
 ## Coming later
 - QR import from a PC page (planned, not built yet).

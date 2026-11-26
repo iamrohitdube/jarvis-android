@@ -182,7 +182,12 @@ class ChatViewModel @Inject constructor(
                         }
                         return@collect
                     }
-                    val channel = if (p.recipient.channel == dev.jarvis.messaging.Channel.SMS) "SMS" else p.recipient.detail + " message"
+                    val channel = when (p.recipient.channel) {
+                        dev.jarvis.messaging.Channel.SMS -> "SMS"
+                        dev.jarvis.messaging.Channel.EMAIL ->
+                            (if (p.recipient.thread != null) "Email reply" else "Email") + ", subject ${p.recipient.subject},"
+                        else -> p.recipient.detail + " message"
+                    }
                     val how = if (p.voiceAllowed) "Say send it to send." else "Tap Send it on the screen to send."
                     voice.ask("$channel to ${p.recipient.name}: ${p.text}. $how") { answer ->
                         when {

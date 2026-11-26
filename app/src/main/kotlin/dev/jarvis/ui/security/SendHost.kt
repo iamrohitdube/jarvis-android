@@ -35,7 +35,12 @@ fun SendHost(coordinator: SendCoordinator) {
         )
         return
     }
-    val channel = if (p.recipient.channel == Channel.SMS) "SMS" else p.recipient.detail
+    val email = p.recipient.channel == Channel.EMAIL
+    val channel = when (p.recipient.channel) {
+        Channel.SMS -> "SMS"
+        Channel.EMAIL -> if (p.recipient.thread != null) "reply" else "email"
+        else -> p.recipient.detail
+    }
     when (p.stage) {
         SendPrompt.Stage.CONFIRM -> AlertDialog(
             onDismissRequest = coordinator::cancel,
@@ -43,6 +48,8 @@ fun SendHost(coordinator: SendCoordinator) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("To ${p.recipient.name} (${p.recipient.detail})", style = MaterialTheme.typography.titleSmall)
+                    if (email) Text("Subject: ${p.recipient.subject}", style = MaterialTheme.typography.bodyMedium)
+                    p.recipient.thread?.let { Hint("Replying to their email \"${it.originalSubject}\", in the same thread.") }
                     Text("\"${p.text}\"", style = MaterialTheme.typography.bodyLarge)
                     Hint(
                         if (p.voiceAllowed) "Say \"send it\" or tap Send it. Nothing is sent otherwise."

@@ -24,10 +24,13 @@ enum class Channel(val wire: String, val label: String) {
     CHAT("chat", "chat reply"),
     /** A phone call (D36): reuses the confirmation dialog; never chosen by [of]. */
     CALL("call", "call"),
+    /** Gmail (D36): new emails and replies in the same thread. */
+    EMAIL("email", "email"),
     ;
     companion object {
         fun of(wire: String?): Channel = when (wire?.lowercase(Locale.ENGLISH)) {
             null, "", "sms", "text", "message" -> SMS
+            "email", "e-mail", "mail", "gmail" -> EMAIL
             else -> CHAT // whatsapp, telegram, signal, chat…
         }
     }
@@ -42,6 +45,10 @@ data class Recipient(
     val detail: String,
     /** For chat replies: the app's package (whatsapp vs telegram filtering). */
     val app: String = "",
+    /** Email only: the subject ("Re: …" for a reply). */
+    val subject: String = "",
+    /** Email replies: the email being answered. */
+    val thread: EmailThread? = null,
 )
 
 /** Finds recipients by name or number (contacts for SMS, live chat notifications for replies). */
@@ -174,7 +181,9 @@ class Messenger(
         val channel = Channel.of(input.str("channel"))
         val app = input.str("channel")?.lowercase(Locale.ENGLISH)?.takeIf { channel == Channel.CHAT && it != "chat" }
         val to = input.str("to")?.take(80) ?: return@withLock "Who should I send it to?"
-        val text = input.str("text")?.take(MAX_TEXT) ?: return@withLock "What should the message say?"
+        val text = input.str("text")?.take(if (channel == Channel.EMAIL) MAX_EMAIL else MAX_TEXT) ?: return@withLock "What should the message say?"
+        // Email: "reply" answers their latest email in its thread; otherwise a new email.
+        val reply = channel == Channel.EMAIL && input.str("reply")?.lowercase(Locale.ENGLISH) == "true"
         val sender = senders[channel] ?: return@withLock "I can't send ${channel.label}s on this phone."
 
         val now = clock()
@@ -184,14 +193,26 @@ class Messenger(
             return@withLock "That's $count messages this hour, the limit. Not sent."
         }
 
-        val matches = finder.find(channel, to, app)
+        val matches = try {
+            finder.find(channel, to, if (channel == Channel.EMAIL) (if (reply) REPLY else null) else app)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SecurityException) {
+            return@withLock "I need access to your contacts for that. Allow it in Settings → Phone data."
+        } catch (e: Exception) {
+            return@withLock "Couldn't look up \"$to\": ${e.message ?: "unknown error"}"
+        }
         when {
+            matches.isEmpty() && channel == Channel.EMAIL -> return@withLock if (reply) "I can't find an email from \"$to\" in your inbox."
+                else "I can't find an email address for \"$to\". Say the address, or add it to their contact."
             matches.isEmpty() -> return@withLock if (channel == Channel.SMS) "I can't find \"$to\" in your contacts."
                 else "I can't find \"$to\": no open ${app ?: "chat"} notification from them, and no contact of that name for WhatsApp."
             matches.size > 1 -> return@withLock "Which \"$to\"? " + matches.take(4).joinToString(", ") { "${it.name} (${it.detail})" } +
                 ". Say the full name."
         }
-        val recipient = matches.single()
+        val recipient = matches.single().let { r ->
+            if (channel == Channel.EMAIL && r.thread == null) r.copy(subject = input.str("subject")?.let(EmailComposer::oneLine) ?: EmailComposer.subjectFrom(text)) else r
+        }
         val trusted = s.trusted.any { it.isNotBlank() && recipient.name.equals(it.trim(), ignoreCase = true) }
         audit(AuditEvent(AuditCategory.TOOL, "send_draft", "shown", tool = SEND_TOOL, detail = channel.wire))
 
@@ -227,6 +248,9 @@ class Messenger(
     companion object {
         const val SEND_TOOL = "send_message"
         const val MAX_TEXT = 1000
+        const val MAX_EMAIL = 4000
+        /** Passed to the finder as the "app" for email replies. */
+        const val REPLY = "reply"
         private const val HOUR = 3600_000L
     }
 }

@@ -56,6 +56,22 @@ class Contacts(private val resolver: ContentResolver) {
         }
         return out.values.toList()
     }
+
+    /** (name, email address) for contacts matching [query] (D36: "email Priya"). */
+    fun findEmails(query: String): List<Pair<String, String>> {
+        val uri = Uri.withAppendedPath(ContactsContract.CommonDataKinds.Email.CONTENT_FILTER_URI, Uri.encode(query))
+        val out = LinkedHashMap<String, Pair<String, String>>()
+        resolver.query(
+            uri, arrayOf(ContactsContract.CommonDataKinds.Email.DISPLAY_NAME_PRIMARY, ContactsContract.CommonDataKinds.Email.ADDRESS), null, null, null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val name = c.getString(0).orEmpty()
+                val address = c.getString(1).orEmpty().trim()
+                if (EmailComposer.isAddress(address)) out.putIfAbsent(address.lowercase(Locale.ENGLISH), name to address)
+            }
+        }
+        return out.values.toList()
+    }
 }
 
 /** SMS inbox (READ_SMS) + sending (SEND_SMS) + contact names (READ_CONTACTS). Restricted for file installs. */
@@ -138,7 +154,13 @@ object MessageMatch {
 }
 
 /** Contacts for SMS; live chat notifications for replies. */
-class AndroidRecipientFinder(private val contacts: Contacts, private val dao: CapturedMessageDao, private val clock: () -> Long = System::currentTimeMillis) : RecipientFinder {
+class AndroidRecipientFinder(
+    private val contacts: Contacts,
+    private val dao: CapturedMessageDao,
+    private val clock: () -> Long = System::currentTimeMillis,
+    /** Gmail recipients and threads (D36); null = no email. */
+    private val email: EmailRecipientFinder? = null,
+) : RecipientFinder {
     override suspend fun find(channel: Channel, query: String, app: String?): List<Recipient> = withContext(Dispatchers.IO) {
         when (channel) {
             Channel.SMS -> {
@@ -178,6 +200,7 @@ class AndroidRecipientFinder(private val contacts: Contacts, private val dao: Ca
                 }
             }
             Channel.CALL -> emptyList()
+            Channel.EMAIL -> email?.find(query, reply = app == Messenger.REPLY).orEmpty()
         }
     }
 }

@@ -148,6 +148,7 @@ object AppModule {
     fun googleAuth(@ApplicationContext c: Context) = dev.jarvis.connectors.google.GoogleAuth(
         gmail = GoogleAuthorizer(c, listOf(GoogleAuthorizer.GMAIL_READONLY)),
         drive = GoogleAuthorizer(c, listOf(GoogleAuthorizer.DRIVE_METADATA_READONLY)),
+        gmailSend = GoogleAuthorizer(c, listOf(GoogleAuthorizer.GMAIL_SEND)),
     )
 
     @Provides @Singleton
@@ -236,11 +237,18 @@ object AppModule {
         @ApplicationContext c: Context, contacts: dev.jarvis.messaging.Contacts, captured: dev.jarvis.data.db.CapturedMessageDao,
         coordinator: dev.jarvis.messaging.SendCoordinator, sent: dev.jarvis.data.db.SentMessageDao, audit: AuditLog,
         settings: SettingsRepository, biometric: AndroidBiometricAvailability,
+        google: dev.jarvis.connectors.google.GoogleAuth, http: OkHttpClient, json: Json,
     ) = dev.jarvis.messaging.Messenger(
-        finder = dev.jarvis.messaging.AndroidRecipientFinder(contacts, captured),
+        finder = dev.jarvis.messaging.AndroidRecipientFinder(
+            contacts, captured,
+            email = dev.jarvis.messaging.EmailRecipientFinder(
+                { q -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { contacts.findEmails(q) } }, google.gmail, GmailApi(http, json),
+            ),
+        ),
         senders = mapOf(
             dev.jarvis.messaging.Channel.SMS to dev.jarvis.messaging.SmsSender(c),
             dev.jarvis.messaging.Channel.CHAT to dev.jarvis.messaging.ReplySender(c),
+            dev.jarvis.messaging.Channel.EMAIL to dev.jarvis.messaging.EmailSender(google.gmailSend, GmailApi(http, json)),
         ),
         coordinator = coordinator, sent = sent, audit = audit,
         settings = {
