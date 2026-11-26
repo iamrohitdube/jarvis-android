@@ -559,6 +559,28 @@ class SettingsViewModel @Inject constructor(
         messageOf(kind).value = "${nameOf(kind)} disconnected on this phone. To remove access fully: myaccount.google.com/connections."
     }
 
+    // ---- Email sending (D36): a separate send-only grant, so reading never depends on it ----
+    fun allowEmailSending(launchConsent: (android.app.PendingIntent) -> Unit) = launchBusy {
+        gmailMessage.value = "Asking Google…"
+        when (val r = google.gmailSend.authorize()) {
+            dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Granted -> emailSendGranted()
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.NeedsUser -> { gmailMessage.value = null; launchConsent(r.pendingIntent) }
+            is dev.jarvis.connectors.google.GoogleAuthorizeOutcome.Failed ->
+                gmailMessage.value = "Couldn't ask Google: ${r.message}. Add the gmail.send scope in Google Cloud (docs/setup-keys.md 3)."
+        }
+    }
+
+    fun completeEmailSending(data: android.content.Intent?) = launchBusy {
+        if (google.gmailSend.completeFromIntent(data)) emailSendGranted()
+        else gmailMessage.value = "Email sending wasn't allowed (cancelled or failed)."
+    }
+
+    private suspend fun emailSendGranted() {
+        repo.setEmailSendAllowed(true)
+        audit.record(AuditEvent(AuditCategory.DATA, "email_send_grant", "ok"))
+        gmailMessage.value = "JARVIS can send email now. Every email is shown to you and needs \"send it\"."
+    }
+
     fun setEmailExcludedSenders(v: String) = viewModelScope.launch { repo.setEmailExcludedSenders(v) }
 
     fun signOutIndMoney() = launchBusy {

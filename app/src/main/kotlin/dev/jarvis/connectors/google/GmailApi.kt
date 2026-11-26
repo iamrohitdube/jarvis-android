@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -42,8 +44,8 @@ data class EmailHeader(
 )
 
 /**
- * Gmail REST v1, read-only (`gmail.readonly`, D29). Only `format=metadata` with From/Subject/Date is requested, so
- * message bodies and attachments are never downloaded.
+ * Gmail REST v1: reads with `gmail.readonly` (D29; only `format=metadata` headers, so bodies and attachments are never
+ * downloaded, except a bill's text in [bodyText]) and sends with `gmail.send` (D36, [send]).
  */
 class GmailApi(
     private val http: OkHttpClient,
@@ -54,6 +56,7 @@ class GmailApi(
     @Serializable private data class Ref(val id: String)
     @Serializable private data class Message(
         val id: String = "",
+        val threadId: String = "",
         val labelIds: List<String> = emptyList(),
         val snippet: String = "",
         val internalDate: String = "0",
@@ -69,6 +72,65 @@ class GmailApi(
     @Serializable private data class Header(val name: String = "", val value: String = "")
 
     data class Page(val estimate: Int, val messages: List<EmailHeader>)
+
+    /** What a reply needs from the email it answers (D36). Headers only. */
+    data class ReplyRef(
+        val id: String,
+        val threadId: String,
+        /** The RFC 2822 Message-ID, for In-Reply-To and References. */
+        val messageId: String,
+        val references: String,
+        val subject: String,
+        /** Reply-To if set, else From ("Name <address>"). */
+        val replyTo: String,
+        val at: Long,
+    )
+
+    /** The newest messages matching [query], with the headers a reply needs. */
+    suspend fun replyRefs(token: String, query: String, max: Int = 5): List<ReplyRef> {
+        val url = "$baseUrl/gmail/v1/users/me/messages".toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
+            .addQueryParameter("maxResults", max.coerceIn(1, MAX_RESULTS).toString())
+            .build()
+        val list = json.decodeFromString(ListResponse.serializer(), get(token, url))
+        return coroutineScope {
+            list.messages.take(max).map { ref ->
+                async {
+                    val u = "$baseUrl/gmail/v1/users/me/messages".toHttpUrl().newBuilder()
+                        .addPathSegment(ref.id).addQueryParameter("format", "metadata")
+                        .apply { REPLY_HEADERS.forEach { addQueryParameter("metadataHeaders", it) } }
+                        .build()
+                    val m = json.decodeFromString(Message.serializer(), get(token, u))
+                    fun header(name: String) = m.payload.headers.firstOrNull { it.name.equals(name, ignoreCase = true) }?.value.orEmpty()
+                    ReplyRef(
+                        id = m.id.ifBlank { ref.id }, threadId = m.threadId, messageId = header("Message-ID").ifBlank { header("Message-Id") },
+                        references = header("References"), subject = header("Subject").take(MAX_FIELD),
+                        replyTo = header("Reply-To").ifBlank { header("From") }.take(MAX_FIELD),
+                        at = m.internalDate.toLongOrNull() ?: 0L,
+                    )
+                }
+            }.awaitAll()
+        }.sortedByDescending { it.at }
+    }
+
+    /** Sends one RFC 2822 message (`gmail.send`); [threadId] keeps a reply in its conversation. */
+    suspend fun send(token: String, raw: String, threadId: String?): Unit = withContext(Dispatchers.IO) {
+        val body = kotlinx.serialization.json.buildJsonObject {
+            put("raw", kotlinx.serialization.json.JsonPrimitive(raw))
+            if (!threadId.isNullOrBlank()) put("threadId", kotlinx.serialization.json.JsonPrimitive(threadId))
+        }.toString()
+        val request = Request.Builder().url("$baseUrl/gmail/v1/users/me/messages/send")
+            .header("Authorization", "Bearer $token")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(request).execute().use { r ->
+            when {
+                r.code == 401 -> throw GmailAuthException()
+                r.code == 403 -> throw IOException("Google didn't allow sending: allow email sending in Settings → Gmail")
+                !r.isSuccessful -> throw IOException("Gmail error ${r.code}")
+            }
+        }
+    }
 
     /** Messages matching [query] (Gmail search syntax), newest first, with headers and snippets. */
     suspend fun search(token: String, query: String, max: Int): Page {
@@ -149,6 +211,7 @@ class GmailApi(
         private const val MAX_SNIPPET = 240
         private const val MAX_BODY = 8_000
         val METADATA_HEADERS = listOf("From", "Subject", "List-Unsubscribe", "Precedence")
+        val REPLY_HEADERS = listOf("From", "Reply-To", "Subject", "Message-ID", "References")
         /** Only the labels triage uses are kept (user-made label names never leave Gmail's ids anyway). */
         private val KEPT_LABELS = setOf(
             "IMPORTANT", "STARRED", "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_FORUMS",

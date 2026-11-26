@@ -68,6 +68,8 @@ data class AppSettings(
     val readAppNotifications: Boolean = false,
     /** Apps whose notifications are never kept, comma separated (app names). */
     val ignoredNotificationApps: String = "",
+    /** Google granted `gmail.send` (D36): shown on the Gmail card. */
+    val emailSendAllowed: Boolean = false,
     /** Blocks every personal-data read (D29 step 6). */
     val privateMode: Boolean = false,
     /** Features whose data may go to Claude, redacted (ToolGroup names). Default: none. */
@@ -130,6 +132,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             maxMessagesPerHour = p[MAX_PER_HOUR] ?: 20,
             readAppNotifications = p[READ_APP_NOTIFICATIONS] ?: false,
             ignoredNotificationApps = p[IGNORED_NOTIFICATION_APPS] ?: "",
+            emailSendAllowed = p[EMAIL_SEND_ALLOWED] ?: false,
             privateMode = p[PRIVATE_MODE] ?: false,
             claudeConsent = p[CLAUDE_CONSENT] ?: "",
             consentPreviewed = p[CONSENT_PREVIEWED] ?: "",
@@ -174,6 +177,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setTrustedContacts(v: String) = store.edit { it[TRUSTED_CONTACTS] = v.take(1000) }
     suspend fun setReadAppNotifications(v: Boolean) = store.edit { it[READ_APP_NOTIFICATIONS] = v }
     suspend fun setIgnoredNotificationApps(v: String) = store.edit { it[IGNORED_NOTIFICATION_APPS] = v.take(1000) }
+    suspend fun setEmailSendAllowed(v: Boolean) = store.edit { it[EMAIL_SEND_ALLOWED] = v }
     suspend fun setPrivateMode(v: Boolean) = store.edit { it[PRIVATE_MODE] = v }
     suspend fun setClaudeConsent(v: String) = store.edit { it[CLAUDE_CONSENT] = v; if (v.isEmpty()) it[CONSENT_PREVIEWED] = "" }
     suspend fun setConsentPreviewed(v: String) = store.edit { it[CONSENT_PREVIEWED] = v }
@@ -207,6 +211,7 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val TRUSTED_CONTACTS = stringPreferencesKey("trusted_contacts")
         val READ_APP_NOTIFICATIONS = androidx.datastore.preferences.core.booleanPreferencesKey("read_app_notifications")
         val IGNORED_NOTIFICATION_APPS = stringPreferencesKey("ignored_notification_apps")
+        val EMAIL_SEND_ALLOWED = androidx.datastore.preferences.core.booleanPreferencesKey("email_send_allowed")
         val MAX_PER_HOUR = intPreferencesKey("max_messages_per_hour")
         val PRIVATE_MODE = androidx.datastore.preferences.core.booleanPreferencesKey("private_mode")
         val CLAUDE_CONSENT = stringPreferencesKey("claude_consent")

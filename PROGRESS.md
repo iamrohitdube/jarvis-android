@@ -1,6 +1,18 @@
 # PROGRESS
 
-## Current: Phase 13, voice actions (D36), same branch `phase-12-notifications` (one PR for 12 + 13)
+## Current: Phase 14, email actions (D36), branch `phase-14-email` (after PR #9)
+- [x] Code (2026-11-26): `send_message` with channel email: new emails (address as said, the contact's email, or
+  someone who emailed you) and replies (`reply: true`: newest inbox email from that person, else about that topic,
+  answered in its Gmail thread with In-Reply-To/References and "Re:" subject). Same rules as SMS: full draft with
+  subject shown and read out, "send it" (voice for trusted contacts, otherwise a tap), countdown, hourly limit,
+  log. Sending uses a separate send-only grant (`gmail.send`, Settings → Gmail → Allow sending), so reading never
+  depends on it. Claude never sees the email being answered (D29); it writes only what the user said.
+  **409 unit tests, 0 failures.**
+- [ ] Device test: add `gmail.send` in Google Cloud (docs/setup-keys.md 3.2) → Allow sending → "email
+  <me> saying test" → check subject/body; "reply to <sender>'s email saying thanks" → check it lands in the same
+  thread in Gmail; "reply to Ravi" with two Ravis (asks which).
+
+## Phase 13, voice actions (D36), PR #9
 - [x] Code (2026-11-26): "call Mom" recognised on the phone (no Claude) or via Claude's `make_call`; contact
   lookup, "Which one?" for several matches, "Call Mom, number ending 2222? Say call."; only "call"/"dial"/"go ahead"
   or a tap places it. On screen: Call dialog + voice. Hands-free: spoken confirm. `TelecomManager.placeCall` with
@@ -31,9 +43,9 @@
 | 9 | Calls: call log + call recordings (D30) | Merged (#7). Needs device test |
 | 10 | Messages: SMS + chat notifications + confirmed sending | Merged (#7). Needs device test |
 | 11 | Consent + redaction, Private mode | Merged (#7). Needs device test |
-| 12 | Other app notifications (D35) | Code done, this branch. Needs device test |
-| 13 | Voice actions: calls, new WhatsApp messages (D36) | Code done, this branch. Needs device test |
-| 14 | Email actions: reply/send Gmail (D36) | Next |
+| 12 | Other app notifications (D35) | PR #9. Needs device test |
+| 13 | Voice actions: calls, new WhatsApp messages (D36) | PR #9. Needs device test |
+| 14 | Email actions: reply/send Gmail (D36) | Code done, branch `phase-14-email`. Needs device test |
 
 ## Phases 6-11 log (built as the old Phase 6; its step numbers are kept below)
 Step map: 2 = Phase 6, 3 = Phase 7, 4 = Phase 8, 5 = cancelled, 6 = Phase 11, 7 = Phase 9, 8 = Phase 10.
@@ -105,14 +117,12 @@ Step map: 2 = Phase 6, 3 = Phase 7, 4 = Phase 8, 5 = cancelled, 6 = Phase 11, 7 
     full draft, "send it", the countdown, Cancel); reply to a WhatsApp with its notification showing
   - Privacy: Private mode on/off; allow one feature and check the first-send preview
 
-## Next: Phase 14, email actions (D36): reply to and send Gmail by voice
-Needs the `gmail.send` scope added to the user's Google Cloud project (docs/setup-keys.md section 3) and a new
-Google sign-in for it.
+## Next: Phase 15, JARVIS features (D31), starting with 15.1 People view (see below)
 
 ## JARVIS gap list (what a real JARVIS would do that this one can't yet), kept current
 | Gap | Where it fits |
 |---|---|
-| Reply to / send email by voice | Phase 14 (next) |
+| Reply to / send email by voice | Done in Phase 14 (device test pending) |
 | Alarms, timers, reminders ("wake me at 6", "remind me to call Mom at 5") | Phase 19 (AlarmClock intents, WorkManager) |
 | Create/move calendar events by voice | Phase 15 or 19 (calendar write, Tier 3 confirm) |
 | Navigation by voice ("take me home") | Phase 5b (Maps intent; prototype pending) |

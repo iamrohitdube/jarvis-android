@@ -750,6 +750,13 @@ only read. Two new phases go before the D31 features, and every later phase move
   resolves the contact and, after the usual confirmation (full draft, "send it", countdown), opens WhatsApp's
   click-to-chat link with the text typed in. The user taps send in WhatsApp: JARVIS never presses WhatsApp's buttons
   (CLAUDE.md section 7: don't automate the account). Numbers without a country code get the SIM's. Needs the screen.
-- **Phase 14 (next), email actions:** reply/send through the Gmail API (`gmail.send`, a sensitive scope: the user's
-  Google Cloud project in testing mode must add it), with the same rules as SMS.
+- **Phase 14, email actions:** `send_message` with channel email (new) or `reply: true` (answer the newest inbox
+  email from that person, else about that topic). Recipients: an address as said, the contact's email
+  (ContactsContract), or an address that emailed the user (Gmail search). Replies use the original thread
+  (threadId + In-Reply-To + References, "Re:" subject), per Gmail's sending guide. Same confirmation as SMS (full
+  draft with subject shown and read out, "send it", voice only for trusted contacts, countdown, hourly limit, log).
+  `gmail.send` (sensitive scope; the user's testing-mode Google Cloud project must add it) is a separate grant from
+  `gmail.readonly`, so reading never depends on it. Claude never receives the email being answered (D29) and is
+  told to write only what the user asked; headers are built on the phone with line breaks stripped (no header
+  injection) and plain-text UTF-8 bodies.
 
