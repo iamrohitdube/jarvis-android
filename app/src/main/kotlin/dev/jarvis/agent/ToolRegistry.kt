@@ -115,6 +115,8 @@ object ToolRegistry {
         // People (Phase 15.1): one person's calls, texts, chats, email and meetings, gathered on the phone. Tier 1.
         local(PEOPLE, ToolGroup.PEOPLE, "person_brief", "Everything recent with one person: calls, messages, email, next meeting",
             listOf("prep me for", "brief me on", "catch me up on", "what's new with"), itemArg = "query"),
+        local(PEOPLE, ToolGroup.PEOPLE, "meeting_prep", "The next meeting and a brief on the people in it",
+            listOf("prep me for my next meeting", "prep me for the next meeting", "next meeting about"), groupDefault = true, snapshot = true),
     )
 
     /** Phrases that select a group even when no single tool matched. */

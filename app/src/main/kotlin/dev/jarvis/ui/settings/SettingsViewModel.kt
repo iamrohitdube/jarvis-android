@@ -403,6 +403,8 @@ class SettingsViewModel @Inject constructor(
 
     fun setIgnoredNotificationApps(v: String) = viewModelScope.launch { repo.setIgnoredNotificationApps(v) }
 
+    fun setMeetingPrepCards(v: Boolean) = viewModelScope.launch { repo.setMeetingPrepCards(v) }
+
     // ---- Call recordings (D30) ----
     val transcribedCount: StateFlow<Int> = transcripts.doneCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     val transcribeProgress = recordingIndexer.progress

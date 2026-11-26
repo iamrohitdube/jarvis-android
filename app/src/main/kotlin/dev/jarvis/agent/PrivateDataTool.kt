@@ -45,6 +45,7 @@ object PrivateDataTool {
         NOTIFICATIONS_RECENT("notifications_recent", listOf("notifications_recent")),
         NOTIFICATIONS_SEARCH("notifications_search", listOf("notifications_search")),
         PERSON("person", listOf("person_brief")),
+        MEETING_PREP("meeting_prep", listOf("meeting_prep")),
     }
 
     val definition = McpToolDef(
@@ -67,7 +68,7 @@ object PrivateDataTool {
             "their other apps, \"what did I miss\"); notifications_search (notifications from one app or about something, " +
             "e.g. a bank, a delivery, an order: put the app or topic in item); person (everything recent with one person: " +
             "calls, texts, chats, email, next meeting; \"prep me for my call with X\", \"what's going on with X\": put the " +
-            "name in item). " +
+            "name in item); meeting_prep (\"prep me for my next meeting\": the next meeting and the people in it). " +
             "Pass several kinds " +
             "if the question covers several. For one specific stock or fund they own, pass its name as item. Don't " +
             "use it for public market questions (prices, fund facts) or general questions.",

@@ -48,6 +48,8 @@ server. You bring your own Anthropic API key.
     stay in the same Gmail thread. Same confirmation as SMS. Needs the send-only Google grant (Settings → Gmail).
   - **People:** "prep me for my call with Priya": your next meeting with her, missed calls, latest WhatsApp, texts
     and emails, in one brief made on the phone. Also menu → People.
+  - **Meeting prep:** a notification 20-35 minutes before a meeting with a brief on the people in it; "prep me
+    for my next meeting" by voice.
   - **Calls by voice:** "call Mom" (also hands-free with "Hey Jarvis"); JARVIS says who and which number and calls
     when you say "call". New WhatsApp messages to any contact open WhatsApp with the text typed; you tap send.
   - **Other app notifications (optional):** "what did I miss?", "notifications from Amazon" (bank alerts,

@@ -420,6 +420,14 @@ fun PhoneDataSection(vm: SettingsViewModel) {
         // Other apps' notifications (D35): same notification access, plus an explicit switch (off by default).
         val s by vm.settings.collectAsStateWithLifecycle()
         s?.let { settings ->
+            // Meeting prep cards (Phase 15.2): need the calendar above and notifications.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text("Meeting prep cards", style = MaterialTheme.typography.bodyLarge)
+                    Hint("About 15-35 minutes before a meeting: a notification with a brief on the people in it (calls, messages, email). The lock screen shows only \"Meeting soon\".")
+                }
+                androidx.compose.material3.Switch(checked = settings.meetingPrepCards, onCheckedChange = vm::setMeetingPrepCards)
+            }
             var ignored by remember(settings.ignoredNotificationApps) { mutableStateOf(settings.ignoredNotificationApps) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {

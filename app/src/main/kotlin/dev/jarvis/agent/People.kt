@@ -92,6 +92,10 @@ class PeopleConnector(
     override suspend fun signOut() = Unit
 
     override suspend fun callTool(name: String, arguments: JsonObject): ConnectorCall {
+        if (name == MEETING) {
+            val prep = nextMeetings(java.time.LocalDateTime.now(), withinMinutes = 24 * 60).firstOrNull() ?: MeetingPrepResult()
+            return ConnectorCall.Ok(json.encodeToString(MeetingPrepResult.serializer(), prep), toolError = false)
+        }
         val who = (arguments["query"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.take(60)
             ?: return ConnectorCall.Failed("Who should I look up?")
         return ConnectorCall.Ok(json.encodeToString(PersonBrief.serializer(), brief(who)), toolError = false)
@@ -148,16 +152,50 @@ class PeopleConnector(
         seen.values.sortedByDescending { it.lastAt }.take(limit)
     }
 
+    /**
+     * Upcoming timed meetings within [withinMinutes] (next 7 days at most), each with briefs on the people named in
+     * its title (Phase 15.2). [only] limits it to those meetings (the card job passes the due ones).
+     */
+    suspend fun nextMeetings(
+        now: java.time.LocalDateTime, withinMinutes: Long, only: (List<dev.jarvis.connectors.phone.CalendarEvent>) -> List<dev.jarvis.connectors.phone.CalendarEvent> = { it },
+    ): List<MeetingPrepResult> {
+        val raw = (runCatching { calendar?.callTool("calendar_upcoming", JsonObject(emptyMap())) }.getOrNull() as? ConnectorCall.Ok)?.text ?: return emptyList()
+        val events = decode(CalendarResult.serializer(), raw)?.events.orEmpty().filter { e ->
+            val start = EventTime.dateTime(e.start)
+            !e.all_day && start != null && start.isAfter(now.minusMinutes(5)) && java.time.Duration.between(now, start).toMinutes() <= withinMinutes
+        }
+        return only(events).map { e -> MeetingPrepResult(e, MeetingPrep.names(e.title).map { brief(it) }) }
+    }
+
     private fun <T> decode(s: kotlinx.serialization.KSerializer<T>, raw: String): T? = runCatching { json.decodeFromString(s, raw) }.getOrNull()
 
     companion object {
         const val BRIEF = "person_brief"
+        const val MEETING = "meeting_prep"
     }
 }
 
 /** The person brief as text, made on the phone: one line per source, most useful first. Data, never instructions. */
 object PeopleAnswers {
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** "Next: "1:1 with Priya" today 3:00 PM at Room 4." then a short brief per person in it (Phase 15.2). */
+    fun renderMeeting(raw: String, now: ZonedDateTime): String {
+        val r = runCatching { json.decodeFromString(MeetingPrepResult.serializer(), raw) }.getOrNull() ?: return "I couldn't check your calendar."
+        val e = r.event ?: return "No meetings in the next 24 hours."
+        val start = EventTime.dateTime(e.start)
+        val head = "Next: \"${clip(e.title, 70)}\" " + (start?.let { label(it, now) } ?: e.start) +
+            (if (e.location.isNotBlank()) " at ${clip(e.location, 40)}" else "") + "."
+        if (r.people.isEmpty()) return "$head\nNo one named in the title, so no people brief."
+        return head + "\n" + r.people.joinToString("\n") { b -> section(b, now, skipMeeting = true) }
+    }
+
+    /** One person's lines for a meeting card or brief. */
+    fun section(b: PersonBrief, now: ZonedDateTime, skipMeeting: Boolean = false): String {
+        val lines = listOfNotNull(if (skipMeeting) null else meeting(b, now), calls(b, now), messages(b.chats, now), messages(b.texts, now), email(b, now))
+        return if (lines.isEmpty()) "${b.realName()}: nothing recent." else "${b.realName()}:\n" + lines.joinToString("\n") { "• $it" }
+    }
+
     private val TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
     private val DAY = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)
 

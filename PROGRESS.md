@@ -1,6 +1,17 @@
 # PROGRESS
 
-## Current: Phase 15.1, People view (D31, D37), branch `phase-15-people` (after PR #10)
+## Current: Phase 15.2, meeting prep cards (D38), branch `phase-15-2-meeting-prep` (after PR #11)
+- [x] Code (2026-11-26): WorkManager 2.12.0 added. A job every ~15 min finds timed meetings starting within 35
+  min, once each, and posts a notification: "In 20 min: 1:1 with Priya", location, and a brief on each person
+  named in the title (calls, chats, texts, email). Lock screen shows only "Meeting soon". Tap opens People with
+  that person's brief. "Prep me for my next meeting" gives the same by voice (`meeting_prep`). Switch in
+  Settings → Phone data (on by default); Private mode stops it. Only hashed keys of sent cards are stored.
+  **422 unit tests, 0 failures.**
+- [ ] Device test: allow Calendar; create an event "1:1 with <a contact>" 20 minutes ahead; within ~15 min a card
+  appears (check the lock screen shows only "Meeting soon"); tap it (People opens the brief); say "prep me for my
+  next meeting". Check battery/Doze delay on this phone.
+
+## Phase 15.1, People view (D37), PR #11
 - [x] Code (2026-11-26): "prep me for my call with Priya", "catch me up on Ravi", "what's new with Mom" are
   recognised on the phone (`PersonIntent`), or handed back by Claude (`private_data` kind person). The brief
   (`person_brief`, Tier 1, through the security gate) asks call log, SMS, chats, Gmail and calendar in parallel
@@ -128,7 +139,7 @@ Step map: 2 = Phase 6, 3 = Phase 7, 4 = Phase 8, 5 = cancelled, 6 = Phase 11, 7 
     full draft, "send it", the countdown, Cancel); reply to a WhatsApp with its notification showing
   - Privacy: Private mode on/off; allow one feature and check the first-send preview
 
-## Next: Phase 15.2, meeting prep card before meetings (then 15.3 missed-call follow-ups)
+## Next: Phase 15.3, missed-call follow-ups (then 15.4 watch list)
 
 ## JARVIS gap list (what a real JARVIS would do that this one can't yet), kept current
 | Gap | Where it fits |

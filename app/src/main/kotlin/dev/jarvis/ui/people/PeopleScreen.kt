@@ -68,6 +68,11 @@ class PeopleViewModel @Inject constructor(
 
     fun load() = viewModelScope.launch {
         privateMode.value = settings.current().privateMode
+        // Opened from a meeting card: show that person's brief straight away.
+        dev.jarvis.service.PeopleLaunch.pending.value?.let { name ->
+            dev.jarvis.service.PeopleLaunch.pending.value = null
+            open(name)
+        }
         if (!privateMode.value) recent.value = people.recent()
     }
 
