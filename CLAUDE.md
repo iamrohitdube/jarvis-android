@@ -200,24 +200,35 @@ wake word engine status, last errors.
 5. Wake word: foreground service, WakeWordEngine + Porcupine, battery/permission flows.
 5b. Riding mode: assistant-role registration, Bluetooth audio routing, helmet trigger, ducking,
     riding restrictions, Maps navigation prototype. Test on a real phone with the C40 before moving on.
-6. Private personal data (D29, docs/handoff-private-data.md), one step at a time: INDmoney off Anthropic
-   (in-app MCP client + local answers); Google sign-in + Gmail read-only; Calendar read-only; Drive metadata
-   search; consent + redaction settings. All with offline cache, privacy
-   filters, audit, and tests proving nothing personal reaches Anthropic. Then call log and call recordings (D30),
-   then SMS/notification messaging
-   with confirmations (section 7).
-6c. JARVIS features (D31), after Phase 6, one at a time, stop after each:
+Phases 6-12: private personal data (D29, docs/handoff-private-data.md), one data source per phase (D35). Every one:
+answered on the phone, offline cache where useful, privacy filters, audit, and tests proving nothing personal
+reaches Anthropic.
+6. Finance: INDmoney off Anthropic (in-app MCP client + answers on the phone, recipes D32). Done.
+7. Email: Google sign-in + Gmail read-only, on-phone triage. Done.
+8. Calendar (phone calendar provider) + Google Drive metadata search. Done.
+9. Calls: call log, then call recordings transcribed on the phone (D30). Done.
+10. Messages: SMS + chat-app notifications, sending with confirmations (section 7). Done.
+11. Consent + redaction settings, Private mode. Done.
+12. Other app notifications (bank alerts, deliveries, reminders): opt-in, read on the phone (D35).
+13. Voice actions (D36): "call Mom" (contact lookup, "call" to confirm, works hands-free), new WhatsApp messages
+   to any contact (WhatsApp opens with the text typed; the user taps send). Riding mode reuses both.
+14. Email actions (D36): reply to and send Gmail by voice (`gmail.send` scope), same confirmation rules as SMS
+   (section 7: full draft read back, "send it", countdown, log).
+15. JARVIS features (D31), one at a time, stop after each (15.1 to 15.9):
    1 People view (calls, email, meetings, messages per person; "prep me for my call with X");
    2 meeting prep card before meetings; 3 missed-call follow-ups; 4 user-editable watch list re-checked on a timer;
    5 night debrief; 6 location routines (geofences); 7 bills and subscriptions from SMS/email;
    8 travel (PNR/flights from email, leave-now reminders, boarding pass); 9 screen awareness + camera ("what's this?").
    All follow D29: personal data answered on the phone; Claude only with consent, redacted.
-7. Memory: knowledge-base notes, persona file, "remember/forget" commands, context compaction.
-8. Briefing + Monitor modes (WorkManager), notifications, offline action queue with sync-on-reconnect.
-9. JARVIS features, one at a time: vision ("what is this?", bill reading), notification triage,
+16. Memory: knowledge-base notes, persona file, "remember/forget" commands, context compaction.
+17. Career module (section 14), in three steps: 17.1, 17.2, 17.3.
+18. Briefing + Monitor modes (WorkManager), notifications, offline action queue with sync-on-reconnect.
+19. More JARVIS features, one at a time: vision ("what is this?", bill reading), notification triage,
    routines and phone control via intents, driving refinements. Then (optional, last) smart home and
    accessibility-based screen awareness. Verify each permission policy before implementing.
-10. Polish: onboarding, permission explanations, backup/restore, docs, release build.
+   See the JARVIS gap list in PROGRESS.md for what is still missing.
+20. Polish: onboarding, permission explanations, backup/restore, docs, release build.
+Old numbers (before D35/D36): 6 = phases 6-12, "6c" = 15, 7 = 16, 7b = 17, 8 = 18, 9 = 19, 10 = 20.
 
 ## 13. Definition of done (every phase)
 - Builds and installs; unit tests pass; no secrets in repo or logs.
@@ -300,11 +311,11 @@ Input: a JD (shared link, pasted text, or a saved JobPosting) + MasterResume.
 - Token control: keep MasterResume in the cached prompt prefix; use the cheaper model for JD keyword
   extraction and fit scoring, the stronger model for rewriting. Cap the number of JDs processed per request.
 
-### Phase 7b: Career module (after Phase 7 Memory; build in three steps and stop after each)
-- 7b-i: ProfilePrefs, job search skill, JobPosting/Application tables, tracker UI, share-sheet input.
-- 7b-ii: MasterResume import (paste/upload PDF or DOCX, parse to structured form, user reviews),
+### Phase 17: Career module (after Phase 16 Memory; build in three steps and stop after each)
+- 17.1: ProfilePrefs, job search skill, JobPosting/Application tables, tracker UI, share-sheet input.
+- 17.2: MasterResume import (paste/upload PDF or DOCX, parse to structured form, user reviews),
   tailoring skill with diff approval and the truthfulness validator + tests.
-- 7b-iii: PDF/DOCX output, cover letter draft, job digest in Briefing mode, follow-up reminders.
+- 17.3: PDF/DOCX output, cover letter draft, job digest in Briefing mode, follow-up reminders.
 
 ## 15. Zero-config UX (phone-first setup)
 Goal: after installing the APK, the user completes everything through in-app screens. No terminal,

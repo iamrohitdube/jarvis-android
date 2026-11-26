@@ -18,14 +18,17 @@ import androidx.room3.RoomDatabase
         TranscriptEntity::class,
         CapturedMessageEntity::class,
         SentMessageEntity::class,
+        CapturedNotificationEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
     autoMigrations = [
         // v2 (Phase 3): messages.sensitive and messages.screenOnly, both defaulting to 0.
         AutoMigration(from = 1, to = 2),
         // v3 (Phase 6): transcripts, captured_messages, sent_messages (new tables only).
         AutoMigration(from = 2, to = 3),
+        // v4 (Phase 12, D35): captured_notifications (new table only).
+        AutoMigration(from = 3, to = 4),
     ],
 )
 abstract class JarvisDatabase : RoomDatabase() {
@@ -36,6 +39,7 @@ abstract class JarvisDatabase : RoomDatabase() {
     abstract fun transcripts(): TranscriptDao
     abstract fun capturedMessages(): CapturedMessageDao
     abstract fun sentMessages(): SentMessageDao
+    abstract fun capturedNotifications(): CapturedNotificationDao
 
     companion object {
         const val NAME = "jarvis.db"

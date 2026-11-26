@@ -19,7 +19,7 @@ interface ConsentGate {
 
 /** The user-facing name of each feature in consent settings. */
 object ConsentFeatures {
-    val ALL = listOf(ToolGroup.FINANCE, ToolGroup.EMAIL, ToolGroup.CALENDAR, ToolGroup.FILES, ToolGroup.CALLS, ToolGroup.MESSAGING)
+    val ALL = listOf(ToolGroup.FINANCE, ToolGroup.EMAIL, ToolGroup.CALENDAR, ToolGroup.FILES, ToolGroup.CALLS, ToolGroup.MESSAGING, ToolGroup.NOTIFICATIONS)
 
     fun label(g: ToolGroup) = when (g) {
         ToolGroup.FINANCE -> "Finance (INDmoney)"
@@ -28,6 +28,7 @@ object ConsentFeatures {
         ToolGroup.FILES -> "Drive files"
         ToolGroup.CALLS -> "Calls and call recordings"
         ToolGroup.MESSAGING -> "Texts and chat messages"
+        ToolGroup.NOTIFICATIONS -> "Other app notifications"
         else -> g.name.lowercase()
     }
 

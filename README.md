@@ -44,6 +44,10 @@ server. You bring your own Anthropic API key.
     recorded (transcribed on the phone).
   - **Messages:** texts and WhatsApp/Telegram/Signal messages; send an SMS or reply to a chat after you confirm
     the full text ("send it"), with 5 seconds to cancel and a log of every send.
+  - **Calls by voice:** "call Mom" (also hands-free with "Hey Jarvis"); JARVIS says who and which number and calls
+    when you say "call". New WhatsApp messages to any contact open WhatsApp with the text typed; you tap send.
+  - **Other app notifications (optional):** "what did I miss?", "notifications from Amazon" (bank alerts,
+    deliveries, reminders; off by default, kept 3 days, one-time codes skipped).
   - **Privacy controls:** Private mode, and per-feature consent to send a redacted version to Claude for summaries.
 - Cost control:
   - only the relevant tools are sent per request
@@ -89,7 +93,8 @@ server. You bring your own Anthropic API key.
 | Calendar (optional) | Today's events and your next meeting. Read-only. |
 | Call log (optional, restricted*) | Who called, missed calls, last call with someone. |
 | SMS and contacts (optional, restricted*) | Read your texts; send an SMS only after you confirm the full text; contact names. |
-| Notification access (optional, restricted*) | Read WhatsApp/Telegram/other chat messages and reply through their own reply button. |
+| Phone calls (optional) | "Call Mom": place the call after you confirm. Without it, JARVIS opens the dialer with the number. |
+| Notification access (optional, restricted*) | Read WhatsApp/Telegram/other chat messages and reply through their own reply button. With "Other app notifications" on (off by default), also keeps other apps' notifications (bank alerts, deliveries) for 3 days so you can ask "what did I miss?". |
 | A folder you pick (optional) | Your dialer's call-recordings folder, read-only, for on-phone transcripts. JARVIS never records calls. |
 
 \*Android restricts these for apps installed from a downloaded file: if it refuses, open App info → ⋮ → **Allow

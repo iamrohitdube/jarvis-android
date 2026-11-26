@@ -55,7 +55,7 @@ OAuthRedirectActivity ────────▶ IndMoneyConnector.completeSign
 | `usage_log` | Tokens, cost, latency per request; no text | ~13 months |
 
 Context sent to Claude is still only the last 8 turns, clipped (`AgentLoop.trimHistory`). Context compaction is
-Phase 7. The schema is exported to `app/schemas/` so future versions can ship tested migrations.
+Phase 16. The schema is exported to `app/schemas/` so future versions can ship tested migrations.
 
 ## Swappable interfaces
 `LlmClient`, `SecretStore`, `Connector`, `AuditSink`, `AccessController`, `BiometricAvailability`. Coming later: `WakeWordEngine`, `Stt`, `Tts`.

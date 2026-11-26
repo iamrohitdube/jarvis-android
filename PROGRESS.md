@@ -1,6 +1,42 @@
 # PROGRESS
 
-## Current: Phase 6, private personal data (D29, docs/handoff-private-data.md), branch `phase-6-private-data`
+## Current: Phase 13, voice actions (D36), same branch `phase-12-notifications` (one PR for 12 + 13)
+- [x] Code (2026-11-26): "call Mom" recognised on the phone (no Claude) or via Claude's `make_call`; contact
+  lookup, "Which one?" for several matches, "Call Mom, number ending 2222? Say call."; only "call"/"dial"/"go ahead"
+  or a tap places it. On screen: Call dialog + voice. Hands-free: spoken confirm. `TelecomManager.placeCall` with
+  CALL_PHONE (Settings → Messaging → Phone calls), else the dialer opens. Logged + audited.
+  New WhatsApp messages to any contact: full confirmation, then WhatsApp opens with the text typed; you tap send.
+  **397 unit tests, 0 failures.**
+- [ ] Device test: allow Phone calls; "call <contact>" in chat (dialog), by voice ("call"), with "Hey Jarvis" with
+  the phone locked/in pocket (spoken confirm, then the call starts); "call Ravi" with two Ravis (asks which);
+  "WhatsApp <contact> I'm on my way" with no notification from them (WhatsApp opens with the text).
+
+## Phase 12, other app notifications (D35)
+- [x] Code (2026-11-26): the notification listener also keeps non-chat apps' notifications (bank alerts, deliveries,
+  reminders) in Room v4 `captured_notifications`, 3 days. Opt-in switch in Settings → Phone data (off by default;
+  off deletes them), ignore list, Private mode stops capture. Skips chats, codes, ongoing/status notifications,
+  secret ones, system apps. Tools `notifications_recent` / `notifications_search` (group NOTIFICATIONS, Tier 1),
+  answered on the phone (`NotificationAnswers`); `private_data` kinds of the same names; consent feature
+  "Other app notifications". **386 unit tests, 0 failures.**
+- [ ] Device test: notification access on → switch on → wait for a bank/delivery notification → "what did I miss?",
+  "notifications from <app>"; add the app to the ignore list and check new ones are skipped; switch off and check
+  the answer becomes "turn it on"; check app names show properly (not package names).
+
+## Phases 6-14 (D35: the old Phase 6 split into one phase per data source; D36: actions)
+| Phase | What | Status |
+|---|---|---|
+| 6 | Finance: INDmoney off Anthropic, answers on the phone, recipes (D32) | Merged (#7). Device-tested |
+| 7 | Email: Gmail read-only + triage | Merged (#7). Sign-in device-tested; triage needs a check |
+| 8 | Calendar + Drive metadata | Merged (#7). Needs device test |
+| 9 | Calls: call log + call recordings (D30) | Merged (#7). Needs device test |
+| 10 | Messages: SMS + chat notifications + confirmed sending | Merged (#7). Needs device test |
+| 11 | Consent + redaction, Private mode | Merged (#7). Needs device test |
+| 12 | Other app notifications (D35) | Code done, this branch. Needs device test |
+| 13 | Voice actions: calls, new WhatsApp messages (D36) | Code done, this branch. Needs device test |
+| 14 | Email actions: reply/send Gmail (D36) | Next |
+
+## Phases 6-11 log (built as the old Phase 6; its step numbers are kept below)
+Step map: 2 = Phase 6, 3 = Phase 7, 4 = Phase 8, 5 = cancelled, 6 = Phase 11, 7 = Phase 9, 8 = Phase 10.
 - [x] Step 1: research and plan (no code). D29 written; Google Cloud steps in docs/setup-keys.md section 3;
   CLAUDE.md sections 2 and 12 updated. **Waiting for the user's review and picks** (phone model, calendar source,
   LLM option).
@@ -69,7 +105,28 @@
     full draft, "send it", the countdown, Cancel); reply to a WhatsApp with its notification showing
   - Privacy: Private mode on/off; allow one feature and check the first-send preview
 
-## Next: Phase 6c, JARVIS features (D31, user-approved 2026-11-25), one at a time
+## Next: Phase 14, email actions (D36): reply to and send Gmail by voice
+Needs the `gmail.send` scope added to the user's Google Cloud project (docs/setup-keys.md section 3) and a new
+Google sign-in for it.
+
+## JARVIS gap list (what a real JARVIS would do that this one can't yet), kept current
+| Gap | Where it fits |
+|---|---|
+| Reply to / send email by voice | Phase 14 (next) |
+| Alarms, timers, reminders ("wake me at 6", "remind me to call Mom at 5") | Phase 19 (AlarmClock intents, WorkManager) |
+| Create/move calendar events by voice | Phase 15 or 19 (calendar write, Tier 3 confirm) |
+| Navigation by voice ("take me home") | Phase 5b (Maps intent; prototype pending) |
+| Answer / reject incoming calls by voice, announce the caller | Phase 5b riding (ANSWER_PHONE_CALLS) |
+| Read new messages aloud as they arrive (riding, headset) | Phase 5b / 18 |
+| Media control ("play", "pause", "next song", volume) | Phase 19 (media session / AudioManager) |
+| Phone settings ("torch on", "do not disturb", "Wi-Fi") | Phase 19 (only what Android allows apps; settings panels otherwise) |
+| Open apps by voice ("open Swiggy") | Phase 19 (launcher intents) |
+| Proactive alerts (bill due, meeting clash, big portfolio move) | Phase 18 Monitor |
+| Morning briefing | Phase 18 |
+| "What's this?" camera/screen | Phase 15.9 / 19 |
+| Remember things about me | Phase 16 |
+
+## Then: Phase 15, JARVIS features (D31, user-approved 2026-11-25; was "6c" before D35), one at a time
 1 People view, 2 meeting prep, 3 missed-call follow-ups, 4 watch list, 5 night debrief, 6 location routines,
 7 bills and subscriptions, 8 travel, 9 screen awareness + camera.
 
@@ -365,13 +422,13 @@ See [docs/decisions.md](docs/decisions.md) (D1–D10). Key ones:
 - Database isn't encrypted with an app key; relies on Android sandbox + file-based encryption (D14; revisit before public release).
 - After the app process is killed, it opens a new chat (old chats are in History).
 - No Diagnostics screen or QR key import yet.
-- No context compaction: the last 8 turns (clipped) are resent (compaction is Phase 7).
+- No context compaction: the last 8 turns (clipped) are resent (compaction is Phase 16).
 - Placeholder launcher icon (system default).
 
 ## Open questions for you
 0. **Database encryption:** still open. Sensitive replies are now hidden in the UI, but the database file isn't
    app-encrypted (SQLCipher adds native libraries and APK size). Recommendation: keep relying on Android's
-   protection for now and revisit before the public release (Phase 10).
+   protection for now and revisit before the public release (Phase 20).
 1. **Licence:** Porcupine's Android SDK is Apache-2.0 (needs a per-user AccessKey). Apache-2.0 for this repo?
 2. **Project folder:** the spec shows `jarvis-android/`; I built at the workspace root (`AI Assistent/`). Fine, or rename?
 3. **Effort/latency:** chat runs at `effort: low` (cheapest). Kept for now.

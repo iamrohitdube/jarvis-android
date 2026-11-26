@@ -64,6 +64,10 @@ data class AppSettings(
     /** Trusted contacts, comma separated: only they can be approved by saying "send it". */
     val trustedContacts: String = "",
     val maxMessagesPerHour: Int = 20,
+    /** Keep other apps' notifications (D35). Off by default; needs notification access too. */
+    val readAppNotifications: Boolean = false,
+    /** Apps whose notifications are never kept, comma separated (app names). */
+    val ignoredNotificationApps: String = "",
     /** Blocks every personal-data read (D29 step 6). */
     val privateMode: Boolean = false,
     /** Features whose data may go to Claude, redacted (ToolGroup names). Default: none. */
@@ -124,6 +128,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
             sendingEnabled = p[SENDING_ENABLED] ?: true,
             trustedContacts = p[TRUSTED_CONTACTS] ?: "",
             maxMessagesPerHour = p[MAX_PER_HOUR] ?: 20,
+            readAppNotifications = p[READ_APP_NOTIFICATIONS] ?: false,
+            ignoredNotificationApps = p[IGNORED_NOTIFICATION_APPS] ?: "",
             privateMode = p[PRIVATE_MODE] ?: false,
             claudeConsent = p[CLAUDE_CONSENT] ?: "",
             consentPreviewed = p[CONSENT_PREVIEWED] ?: "",
@@ -166,6 +172,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setTrustUnlockedPhone(v: Boolean) = store.edit { it[TRUST_UNLOCKED] = v }
     suspend fun setSendingEnabled(v: Boolean) = store.edit { it[SENDING_ENABLED] = v }
     suspend fun setTrustedContacts(v: String) = store.edit { it[TRUSTED_CONTACTS] = v.take(1000) }
+    suspend fun setReadAppNotifications(v: Boolean) = store.edit { it[READ_APP_NOTIFICATIONS] = v }
+    suspend fun setIgnoredNotificationApps(v: String) = store.edit { it[IGNORED_NOTIFICATION_APPS] = v.take(1000) }
     suspend fun setPrivateMode(v: Boolean) = store.edit { it[PRIVATE_MODE] = v }
     suspend fun setClaudeConsent(v: String) = store.edit { it[CLAUDE_CONSENT] = v; if (v.isEmpty()) it[CONSENT_PREVIEWED] = "" }
     suspend fun setConsentPreviewed(v: String) = store.edit { it[CONSENT_PREVIEWED] = v }
@@ -197,6 +205,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val TRUST_UNLOCKED = androidx.datastore.preferences.core.booleanPreferencesKey("trust_unlocked_phone")
         val SENDING_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("sending_enabled")
         val TRUSTED_CONTACTS = stringPreferencesKey("trusted_contacts")
+        val READ_APP_NOTIFICATIONS = androidx.datastore.preferences.core.booleanPreferencesKey("read_app_notifications")
+        val IGNORED_NOTIFICATION_APPS = stringPreferencesKey("ignored_notification_apps")
         val MAX_PER_HOUR = intPreferencesKey("max_messages_per_hour")
         val PRIVATE_MODE = androidx.datastore.preferences.core.booleanPreferencesKey("private_mode")
         val CLAUDE_CONSENT = stringPreferencesKey("claude_consent")

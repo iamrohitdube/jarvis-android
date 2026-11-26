@@ -24,6 +24,9 @@
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- D36: "call Mom" places the call directly (asked for in Settings → Messaging; without it the dialer opens). -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <!-- Lets the app find a browser that supports Custom Tabs for OAuth sign-in (package visibility). -->
@@ -37,6 +40,11 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- D35: app names for other apps' notifications (launcher apps only, not QUERY_ALL_PACKAGES). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
 
@@ -82,7 +90,7 @@
         <service
             android:name=".messaging.JarvisNotificationListener"
             android:exported="false"
-            android:label="JARVIS chat messages"
+            android:label="JARVIS messages and notifications"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

@@ -24,6 +24,17 @@ import dev.jarvis.ui.components.Hint
 fun SendHost(coordinator: SendCoordinator) {
     val prompt by coordinator.prompt.collectAsStateWithLifecycle()
     val p = prompt ?: return
+    if (p.recipient.channel == Channel.CALL) {
+        // Voice calling (D36): who and which number, then Call or Cancel.
+        AlertDialog(
+            onDismissRequest = coordinator::cancel,
+            title = { Text("Call ${p.recipient.name}?") },
+            text = { Hint("${p.recipient.detail}. Say \"call\" or tap Call.") },
+            confirmButton = { Button(onClick = { coordinator.approve(byVoice = false) }) { Text("Call") } },
+            dismissButton = { TextButton(onClick = coordinator::cancel) { Text("Cancel") } },
+        )
+        return
+    }
     val channel = if (p.recipient.channel == Channel.SMS) "SMS" else p.recipient.detail
     when (p.stage) {
         SendPrompt.Stage.CONFIRM -> AlertDialog(

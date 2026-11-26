@@ -181,6 +181,9 @@ object AppModule {
     fun capturedMessageDao(db: JarvisDatabase) = db.capturedMessages()
 
     @Provides @Singleton
+    fun capturedNotificationDao(db: JarvisDatabase) = db.capturedNotifications()
+
+    @Provides @Singleton
     fun sentMessageDao(db: JarvisDatabase) = db.sentMessages()
 
     /** The recordings folder is the app's one persisted read grant (Storage Access Framework). */
@@ -218,6 +221,13 @@ object AppModule {
     fun chats(@ApplicationContext c: Context, dao: dev.jarvis.data.db.CapturedMessageDao, json: Json) =
         dev.jarvis.messaging.ChatsConnector(dao, json, granted = { dev.jarvis.messaging.JarvisNotificationListener.enabled(c) })
 
+    /** Other apps' notifications (D35): notification access AND the Settings switch. */
+    @Provides @Singleton
+    fun alerts(@ApplicationContext c: Context, dao: dev.jarvis.data.db.CapturedNotificationDao, json: Json, settings: SettingsRepository) =
+        dev.jarvis.messaging.AlertsConnector(dao, json, granted = {
+            dev.jarvis.messaging.JarvisNotificationListener.enabled(c) && kotlinx.coroutines.runBlocking { settings.current().readAppNotifications }
+        })
+
     @Provides @Singleton
     fun sendCoordinator() = dev.jarvis.messaging.SendCoordinator()
 
@@ -244,6 +254,20 @@ object AppModule {
         deviceLocked = { biometric.deviceLocked() },
     )
 
+    /** Voice calling on the chat/wake screen (D36): the Call dialog, and "call" said in a voice turn. */
+    @Provides @Singleton
+    fun caller(
+        @ApplicationContext c: Context, contacts: dev.jarvis.messaging.Contacts, coordinator: dev.jarvis.messaging.SendCoordinator,
+        sent: dev.jarvis.data.db.SentMessageDao, audit: AuditLog,
+    ) = dev.jarvis.messaging.Caller(
+        finder = dev.jarvis.messaging.ContactCallFinder(contacts),
+        placer = dev.jarvis.messaging.AndroidCallPlacer(c),
+        confirm = { t ->
+            coordinator.confirm(dev.jarvis.messaging.Recipient(t.name, t.number, dev.jarvis.messaging.Channel.CALL, t.detail), "", voiceAllowed = true)
+        },
+        log = sent, audit = audit,
+    )
+
     @Provides @Singleton
     fun consentCoordinator() = dev.jarvis.agent.ConsentCoordinator()
 
@@ -268,9 +292,9 @@ object AppModule {
         indMoney: IndMoneyConnector, gmail: GmailConnector, drive: dev.jarvis.connectors.google.DriveConnector,
         calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
         recordings: dev.jarvis.connectors.phone.RecordingsConnector, sms: dev.jarvis.messaging.SmsConnector,
-        chats: dev.jarvis.messaging.ChatsConnector,
+        chats: dev.jarvis.messaging.ChatsConnector, alerts: dev.jarvis.messaging.AlertsConnector,
     ): Map<String, @JvmSuppressWildcards Connector> =
-        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings, sms, chats).associateBy { it.id }
+        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings, sms, chats, alerts).associateBy { it.id }
 
     private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
         androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -332,6 +356,10 @@ object AppModule {
         voicePin: VoicePinEngine,
         pin: dev.jarvis.security.PinAuthenticator,
         @ApplicationContext c: Context,
+        tts: Tts,
+        stt: Stt,
+        contacts: dev.jarvis.messaging.Contacts,
+        sent: dev.jarvis.data.db.SentMessageDao,
     ) = AgentLoop(
         llm, connectors, usage,
         access = HeadlessAccess(
@@ -341,6 +369,16 @@ object AppModule {
         ),
         snapshots = snapshots, audit = audit, requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) },
         debugLog = shapeLog, recipes = ClaudeRecipeWriter(llm),
+        // Hands-free calling (D36): asked and confirmed by voice only ("call"), since there's no screen.
+        placeCall = { who ->
+            val spoken = dev.jarvis.voice.SpokenConfirm(tts, stt, { settings.current().preferOnDeviceStt })
+            dev.jarvis.messaging.Caller(
+                finder = dev.jarvis.messaging.ContactCallFinder(contacts),
+                placer = dev.jarvis.messaging.AndroidCallPlacer(c),
+                confirm = { t -> spoken.ask("Call ${t.name}, ${t.detail}? Say call.", dev.jarvis.messaging.CallPhrase::approves) },
+                log = sent, audit = audit,
+            ).handle(who)
+        },
     )
 
     /** Battery level and charging state from the system (no permission needed). */
@@ -389,6 +427,7 @@ object AppModule {
         @ApplicationContext c: Context,
         messenger: dev.jarvis.messaging.Messenger,
         consent: dev.jarvis.agent.ConsentGate,
+        caller: dev.jarvis.messaging.Caller,
     ) = AgentLoop(
         llm, connectors, usage, access = auth, snapshots = snapshots, audit = audit,
         requestContext = { AgentLoop.localTimeLine() }, phoneInfo = { phoneInfo(c) }, debugLog = shapeLog,
@@ -397,6 +436,7 @@ object AppModule {
         sendMessage = { input -> messenger.handle(input) },
         // Consent sends need the preview dialog, so only the on-screen agent has them.
         consent = consent,
+        placeCall = { who -> caller.handle(who) },
     )
 
     /** Debug builds only: result shapes (field names, never values) for writing on-phone templates. */

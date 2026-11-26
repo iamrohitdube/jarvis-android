@@ -116,6 +116,21 @@ data class CapturedMessageEntity(
     val replyKey: String?,
 )
 
+/**
+ * A notification from another (non-chat) app: bank alert, delivery, reminder (D35). Kept 3 days, only while the user's
+ * "Other app notifications" switch is on; deleted when it is turned off.
+ */
+@Entity(tableName = "captured_notifications", indices = [Index("at"), Index("packageName")])
+data class CapturedNotificationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val app: String,
+    val packageName: String,
+    val title: String,
+    val text: String,
+    val category: String?,
+    val at: Long,
+)
+
 /** Every message JARVIS sent, with what was approved and when (CLAUDE.md section 7: log every send). */
 @Entity(tableName = "sent_messages", indices = [Index("approvedAt")])
 data class SentMessageEntity(

@@ -160,10 +160,24 @@ class AndroidRecipientFinder(private val contacts: Contacts, private val dao: Ca
                     .filter { app == null || it.app.lowercase(Locale.ENGLISH).contains(app) || it.packageName.contains(app) }
                     .filter { MessageMatch.matches(it.conversation + " " + it.sender, "", query) }
                 // Latest notification per conversation.
-                live.groupBy { it.packageName + "/" + it.conversation }.values.map { it.maxBy { m -> m.at } }.map {
+                val replies = live.groupBy { it.packageName + "/" + it.conversation }.values.map { it.maxBy { m -> m.at } }.map {
                     Recipient(it.conversation, it.replyKey!!, Channel.CHAT, it.app, it.packageName)
                 }
+                // No open notification: a NEW WhatsApp message to a contact opens WhatsApp with the text typed in, and
+                // the user taps send there (D36; nothing automates WhatsApp itself).
+                replies.ifEmpty {
+                    if (app != null && !app.contains("whatsapp")) emptyList()
+                    else {
+                        val found = contacts.find(query)
+                        val exact = found.filter { it.first.equals(query.trim(), ignoreCase = true) }
+                        exact.ifEmpty { found }.map { (name, number) ->
+                            Recipient(name, WhatsAppOpener.ADDRESS_PREFIX + number, Channel.CHAT,
+                                "WhatsApp, number ending ${number.filter { it.isDigit() }.takeLast(4)}", "com.whatsapp")
+                        }
+                    }
+                }
             }
+            Channel.CALL -> emptyList()
         }
     }
 }
@@ -182,5 +196,37 @@ class SmsSender(private val context: Context) : ChannelSender {
 
 /** A reply through the chat app's own notification reply action. */
 class ReplySender(private val context: Context) : ChannelSender {
-    override suspend fun send(to: Recipient, text: String): Result<Unit> = ReplyRegistry.reply(context, to.address, text)
+    override suspend fun send(to: Recipient, text: String): Result<Unit> =
+        if (WhatsAppOpener.isNewChat(to)) WhatsAppOpener.open(context, to.address.removePrefix(WhatsAppOpener.ADDRESS_PREFIX), text)
+        else ReplyRegistry.reply(context, to.address, text)
+}
+
+/**
+ * A new WhatsApp message (no notification to reply to): opens the chat with the text already typed (WhatsApp's
+ * documented click-to-chat link). The user taps send in WhatsApp; JARVIS never presses it (D36).
+ */
+object WhatsAppOpener {
+    const val ADDRESS_PREFIX = "wa:"
+
+    fun isNewChat(to: Recipient) = to.channel == Channel.CHAT && to.address.startsWith(ADDRESS_PREFIX)
+
+    /** International digits for the link: the number as saved, or with the SIM's country code added. */
+    fun international(number: String, countryIso: String?): String? {
+        val e164 = if (number.trim().startsWith("+")) number else countryIso?.let {
+            android.telephony.PhoneNumberUtils.formatNumberToE164(number, it.uppercase(Locale.ENGLISH))
+        }
+        return e164?.filter { it.isDigit() }?.takeIf { it.length >= 8 }
+    }
+
+    fun open(context: Context, number: String, text: String): Result<Unit> = runCatching {
+        val iso = context.getSystemService(android.telephony.TelephonyManager::class.java)?.let { it.simCountryIso.ifBlank { it.networkCountryIso } }
+        val digits = international(number, iso) ?: throw IllegalStateException("I couldn't work out the country code for that number")
+        val uri = Uri.parse("https://api.whatsapp.com/send?phone=$digits&text=" + Uri.encode(text))
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(android.content.Intent(intent).setPackage("com.whatsapp"))
+        } catch (e: android.content.ActivityNotFoundException) {
+            context.startActivity(intent)
+        }
+    }
 }

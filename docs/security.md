@@ -43,7 +43,7 @@ Personal data stays on the phone by default (D29).
   - Tier 1: personal. Needs a recent phone unlock.
   - Tier 2: sensitive, which covers INDmoney net worth, holdings and SIPs. Needs a fresh PIN or fingerprint, or
     a session under 2 minutes old.
-  - Tier 3: actions. Arrives with messaging in Phase 6.
+  - Tier 3: actions. Arrives with messaging in Phase 10.
 - **Where it's enforced:** the gate (`AuthCoordinator`, via `AccessController`) runs in code before any tool or
   saved tool data is used. It's never left to the prompt.
 - **The flow:**

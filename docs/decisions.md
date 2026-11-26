@@ -641,7 +641,7 @@ deleted with "Clear saved data". Database encryption is still the open question 
 ## D31: JARVIS feature set after Phase 6 (user-approved), 2026-11-25
 Ideas taken from open-source assistants (isair/jarvis knowledge-graph memory, proactive Jarvis repos, OpenClaw's
 heartbeat checklist). Ideas only; no code copied. OpenClaw's community skill store is not used (not audited).
-Built as Phase 6c, one feature at a time: People view, meeting prep, missed-call follow-ups, editable watch list,
+Built as Phase 15 (was "6c" before D35, 13 before D36), one feature at a time: People view, meeting prep, missed-call follow-ups, editable watch list,
 night debrief, location routines, bills and subscriptions, travel, screen awareness + camera. Each follows D29.
 
 ## D32: Recipe answers for private data (user-approved), 2026-11-25
@@ -709,3 +709,47 @@ All built in one pass at the user's request ("complete entire phase 6"); each st
   the first send per feature is previewed exactly; turning consent on needs fingerprint/screen lock. Private mode
   blocks all personal reads.
 - Recipes (D32) now also cover calendar and call-log questions; email keeps its triage templates.
+
+## D35: Phase 6 split into parts; other apps' notifications (user request), 2026-11-26
+- **Split:** Phase 6 was one large phase. Each data source is now its own phase number: 6 finance, 7 email,
+  8 calendar + Drive, 9 calls, 10 messages, 11 consent, 12 other app notifications. Later phases move up:
+  JARVIS features (D31, was "6c") = 13, Memory (was 7) = 14, Career (was 7b) = 15, Briefing + Monitor (was 8) = 16,
+  more JARVIS features (was 9) = 17, Polish (was 10) = 18. Older decisions above keep the old numbers.
+  New work follows the same pattern: one phase, one branch and pull request, then stop.
+- **Other app notifications (Phase 12):** the same notification listener now also keeps notifications from non-chat apps
+  (bank alerts, deliveries, reminders, other email apps) in Room (`captured_notifications`, DB v4), so "what did I
+  miss?" and "notifications from Amazon" are answered on the phone (`notifications_recent`, `notifications_search`,
+  new tool group NOTIFICATIONS, Tier 1, hand-back kinds of the same names).
+- **Opt-in:** off by default; Settings → Phone data → "Other app notifications". Turning it off deletes everything
+  kept. Private mode stops capture. An ignore list (app names, comma separated) skips chosen apps.
+- **Never kept:** JARVIS itself, chat apps (handled by the chats source), system UI/downloads/Play services, ongoing
+  and foreground-service notifications (music, navigation, downloads), group summaries, notifications the app marks
+  secret, status categories (call, missed call, navigation, progress, service, system, transport, alarm, stopwatch,
+  location sharing, workout), and one-time codes. Re-posts of the same text are de-duplicated. Kept 3 days.
+- **Privacy:** notification text is untrusted data, answered by templates only (no recipe), and reaches Claude
+  only with the NOTIFICATIONS consent, redacted, like every other feature (D29).
+- **App names:** the manifest's `<queries>` lists launcher apps (MAIN/LAUNCHER) so Android 11+ returns app labels;
+  no QUERY_ALL_PACKAGES. Without a label the package's last part is used.
+- Not in Phase 12: alerts/triage on arrival (Monitor mode, Phase 18 after D36) and riding-mode notification queueing (Phase 5b).
+
+## D36: Voice actions: calls and new WhatsApp messages (user request), 2026-11-26
+The user expects JARVIS to *act* when asked ("call Mom", "WhatsApp Priya I'm late", "reply to that email"), not
+only read. Two new phases go before the D31 features, and every later phase moves up by two (D31 list = 15, Memory =
+16, Career = 17, Briefing + Monitor = 18, more features = 19, Polish = 20).
+- **Phase 13, calls:** "call X" / "dial", "ring" is recognised on the phone (`CallIntent`, no Claude request, works
+  offline); Claude can also ask with the `make_call` tool. The phone looks the contact up (exact name wins; several
+  matches = "Which one?" before anything else), then says "Call Mom, number ending 2222? Say call." Only an explicit
+  "call" / "dial" / "go ahead" (no negation) or a tap places it; a bare "yes", silence or noise does not
+  (`CallPhrase`). Unlike messages, voice approval works for any contact and with the phone locked: a call carries no
+  content, the in-call screen can end it at once, and hands-free calling is the point in riding mode. Calls are
+  placed with `TelecomManager.placeCall` (CALL_PHONE, asked for in Settings → Messaging → Phone calls); without
+  the permission the dialer opens with the number. Every call is logged (`sent_messages`, channel "call", no text)
+  and audited. Hands-free ("Hey Jarvis" with no screen) confirms through `SpokenConfirm` (speak, listen once).
+  Device test needed: placing a call from the background service and from the lock screen.
+- **Phase 13, new WhatsApp messages:** with no open notification to reply to, `send_message` with channel whatsapp
+  resolves the contact and, after the usual confirmation (full draft, "send it", countdown), opens WhatsApp's
+  click-to-chat link with the text typed in. The user taps send in WhatsApp: JARVIS never presses WhatsApp's buttons
+  (CLAUDE.md section 7: don't automate the account). Numbers without a country code get the SIM's. Needs the screen.
+- **Phase 14 (next), email actions:** reply/send through the Gmail API (`gmail.send`, a sensitive scope: the user's
+  Google Cloud project in testing mode must add it), with the same rules as SMS.
+

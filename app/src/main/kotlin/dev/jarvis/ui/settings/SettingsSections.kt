@@ -295,6 +295,24 @@ fun MessagingSection(vm: SettingsViewModel) {
             shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedButton(onClick = { vm.setTrustedContacts(trusted) }, enabled = trusted != settings.trustedContacts) { Text("Save") }
+        // Voice calling (D36): CALL_PHONE + contacts. Without it, "call Mom" opens the dialer instead.
+        val context = LocalContext.current
+        fun callsAllowed() = dev.jarvis.messaging.AndroidCallPlacer.PERMISSIONS.all {
+            androidx.core.content.ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        var calls by remember { mutableStateOf(callsAllowed()) }
+        androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { calls = callsAllowed(); onPauseOrDispose { } }
+        val callLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+        ) { calls = callsAllowed() }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text("Phone calls", style = MaterialTheme.typography.bodyLarge)
+                Hint("Say \"call Mom\": JARVIS says who and which number, and calls when you say \"call\" (or tap Call). Works hands-free.")
+            }
+            if (calls) StatusChip("Allowed", ChipTone.GOOD)
+            else OutlinedButton(onClick = { callLauncher.launch(dev.jarvis.messaging.AndroidCallPlacer.PERMISSIONS.toTypedArray()) }) { Text("Allow") }
+        }
         Hint("At most ${settings.maxMessagesPerHour} messages an hour. Replies to WhatsApp and other chat apps work only while their message notification is showing.")
         if (log.isNotEmpty()) {
             Text("Recent", style = MaterialTheme.typography.titleSmall)
@@ -377,13 +395,38 @@ fun PhoneDataSection(vm: SettingsViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
                     Text(chats.displayName, style = MaterialTheme.typography.bodyLarge)
-                    Hint(chats.purpose + " Turn on \"JARVIS chat messages\" in notification access.")
+                    Hint(chats.purpose + " Turn on \"JARVIS messages and notifications\" in notification access.")
                 }
                 if (status[chats.id] == ConnectorStatus.Connected) StatusChip("Allowed", ChipTone.GOOD)
                 else OutlinedButton(onClick = {
                     runCatching { context.startActivity(dev.jarvis.messaging.JarvisNotificationListener.settingsIntent(context)) }
                     denied = "If Android says it's restricted: App settings → ⋮ → Allow restricted settings, then try again."
                 }) { Text("Allow") }
+            }
+        }
+        // Other apps' notifications (D35): same notification access, plus an explicit switch (off by default).
+        val s by vm.settings.collectAsStateWithLifecycle()
+        s?.let { settings ->
+            var ignored by remember(settings.ignoredNotificationApps) { mutableStateOf(settings.ignoredNotificationApps) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text("Other app notifications", style = MaterialTheme.typography.bodyLarge)
+                    Hint(
+                        "Bank alerts, deliveries, reminders: ask \"what did I miss?\" or \"notifications from Amazon\". Kept 3 days " +
+                            "on the phone. Chats, one-time codes, music and download status are skipped. Turning it off deletes them.",
+                    )
+                }
+                androidx.compose.material3.Switch(checked = settings.readAppNotifications, onCheckedChange = vm::setReadAppNotifications)
+            }
+            if (settings.readAppNotifications) {
+                if (status[dev.jarvis.agent.ToolRegistry.CHATS] != ConnectorStatus.Connected) {
+                    Hint("Also needs notification access: tap Allow on Chat messages above.")
+                }
+                androidx.compose.material3.OutlinedTextField(
+                    ignored, { ignored = it }, label = { Text("Ignore these apps (comma separated)") },
+                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onClick = { vm.setIgnoredNotificationApps(ignored) }, enabled = ignored != settings.ignoredNotificationApps) { Text("Save") }
             }
         }
         denied?.let {

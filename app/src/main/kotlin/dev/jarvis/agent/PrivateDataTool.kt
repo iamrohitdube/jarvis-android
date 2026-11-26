@@ -42,12 +42,14 @@ object PrivateDataTool {
         SMS_FROM("sms_from", listOf("sms_from")),
         CHATS_RECENT("chats_recent", listOf("chats_recent")),
         CHATS_FROM("chats_from", listOf("chats_from")),
+        NOTIFICATIONS_RECENT("notifications_recent", listOf("notifications_recent")),
+        NOTIFICATIONS_SEARCH("notifications_search", listOf("notifications_search")),
     }
 
     val definition = McpToolDef(
         name = NAME,
         description = "Hand the question to the user's phone when answering needs the user's OWN data: their money, " +
-            "email, calendar, Drive files, calls or messages. The phone answers the user privately and you will NOT see the result, so call it without " +
+            "email, calendar, Drive files, calls, messages or phone notifications. The phone answers the user privately and you will NOT see the result, so call it without " +
             "writing any text first, and never guess or invent the user's numbers or emails. Kinds: net_worth (total, " +
             "invested, returns, profit or loss overall, allocation, liabilities); bank_balance (bank, savings, cash, " +
             "deposits); holdings (the stocks or funds they own, a single holding's value or P&L); sips (their SIPs, " +
@@ -60,7 +62,9 @@ object PrivateDataTool {
             "name or number in item; also how long they talked); recordings_recent (latest call recordings); " +
             "recordings_search (what was said in a recorded call: put the topic, or the person and topic, in item); " +
             "sms_recent (latest texts); sms_from (texts from someone: name or number in item); chats_recent (recent " +
-            "WhatsApp/Telegram/chat messages); chats_from (chat messages from a person or group: name in item). " +
+            "WhatsApp/Telegram/chat messages); chats_from (chat messages from a person or group: name in item); notifications_recent (notifications from " +
+            "their other apps, \"what did I miss\"); notifications_search (notifications from one app or about something, " +
+            "e.g. a bank, a delivery, an order: put the app or topic in item). " +
             "Pass several kinds " +
             "if the question covers several. For one specific stock or fund they own, pass its name as item. Don't " +
             "use it for public market questions (prices, fund facts) or general questions.",

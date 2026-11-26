@@ -1,6 +1,7 @@
 package dev.jarvis.agent
 
 import dev.jarvis.claude.AssembledMessage
+import dev.jarvis.messaging.CallIntent
 import dev.jarvis.claude.LlmClient
 import dev.jarvis.claude.LlmEvent
 import dev.jarvis.claude.LlmException
@@ -106,6 +107,8 @@ class AgentLoop(
     private val sendMessage: (suspend (JsonObject?) -> String)? = null,
     /** Per-feature consent to send redacted personal data to Claude (D29 step 6). Null = never. */
     private val consent: ConsentGate? = null,
+    /** Places a phone call after the phone's confirmation (D36): takes who to call, returns the reply. Null = no calling. */
+    private val placeCall: (suspend (String?) -> String)? = null,
 ) {
     fun run(history: List<ChatTurn>, userText: String, settings: AppSettings): Flow<AgentEvent> = flow {
         // Simple questions the phone can answer itself: no request to Claude (instant, free).
@@ -117,6 +120,15 @@ class AgentLoop(
         }
         // "net worth, fingerprint": the method word picks the auth path and is not sent anywhere.
         val (question, preferredMethod) = AuthMethodParser.extract(userText)
+        // "Call Mom": handled on the phone at once (D36), no Claude request; works offline.
+        if (placeCall != null) CallIntent.target(question)?.let { who ->
+            emit(AgentEvent.Routed(LOCAL_MODEL, emptyList()))
+            emit(AgentEvent.ToolActivity(CallTool.NAME))
+            val reply = placeCall.invoke(who)
+            emit(AgentEvent.TextDelta(reply))
+            emit(AgentEvent.Finished(reply, Usage(), costUsd = 0.0, truncated = false, model = LOCAL_MODEL, personal = true))
+            return@flow
+        }
         val keywordRoute = ToolRouter.route(question, settings)
         // The phrase list is only a BACKUP (offline, budget used up): Claude categorises every question (D29).
         val fallbackPersonal = keywordRoute.tools.filter { it.isPersonal }
@@ -146,6 +158,7 @@ class AgentLoop(
         // Offered whenever the phone has a personal connector (connected or not: the phone then says how to sign in).
         if (connectors.isNotEmpty()) toolDefs += PrivateDataTool.definition
         if (sendMessage != null) toolDefs += SendMessageTool.definition
+        if (placeCall != null) toolDefs += CallTool.definition
         val runnable = toolDefs.map { it.name }.filter { it != PrivateDataTool.NAME }.toSet()
         emit(AgentEvent.Routed(route.model, emptyList()))
 
@@ -162,6 +175,7 @@ class AgentLoop(
         var outcome = "cancelled"
         var handoff: JsonObject? = null
         var sendUse: JsonObject? = null
+        var callUse: JsonObject? = null
         var offline = false
         val started = clock()
 
@@ -196,6 +210,12 @@ class AgentLoop(
                 if (msg.stopReason == "tool_use" && send != null && sendMessage != null) {
                     sendUse = send
                     outcome = "send_handoff"
+                    break
+                }
+                val call = msg.content.firstOrNull { it.str("type") == "tool_use" && it.str("name") == CallTool.NAME }
+                if (msg.stopReason == "tool_use" && call != null && placeCall != null) {
+                    callUse = call
+                    outcome = "call_handoff"
                     break
                 }
                 if (msg.stopReason == "tool_use" && toolRounds < MAX_TOOL_ROUNDS) {
@@ -271,6 +291,14 @@ class AgentLoop(
 
         if (offline) {
             personalOnPhone(fallbackPersonal, null, question, preferredMethod, settings, FinanceAnswers.isBankQuestion(question), allowRecipe = false)
+            return@flow
+        }
+        // Claude asked for a call: the phone finds the contact and confirms before dialling (D36).
+        callUse?.let { use ->
+            emit(AgentEvent.ToolActivity(CallTool.NAME))
+            val reply = placeCall!!((use["input"] as? JsonObject)?.str("to"))
+            emit(AgentEvent.TextDelta(reply))
+            emit(AgentEvent.Finished(reply, usage, costUsd = Pricing.cost(model, usage), truncated = false, model = model, personal = true))
             return@flow
         }
         // Claude drafted a message: the phone's confirmation flow decides whether it is sent.
@@ -621,7 +649,7 @@ class AgentLoop(
         private val EMPTY_ARGS = JsonObject(emptyMap())
         /** Shown as the "model" for answers made on the phone. */
         const val LOCAL_MODEL = "on-device"
-        /** Completed turns resent per request (4 exchanges; context compaction lands in Phase 7). */
+        /** Completed turns resent per request (4 exchanges; context compaction lands in Phase 16). */
         const val MAX_HISTORY_TURNS = 8
         /** Older turns are clipped to this many characters when resent; the current question never is. */
         const val MAX_TURN_CHARS = 1200

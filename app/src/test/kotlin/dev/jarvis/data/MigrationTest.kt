@@ -66,6 +66,9 @@ class MigrationTest {
             db.transcripts().upsert(dev.jarvis.data.db.TranscriptEntity("content://r/1", "Mom", 1, 2, "hello", "done", 3))
             assertEquals(1, db.transcripts().doneCount().first())
             assertEquals(0, db.sentMessages().sentSince(0))
+            // v4 table (D35) exists after the upgrade.
+            db.capturedNotifications().insert(dev.jarvis.data.db.CapturedNotificationEntity(app = "Bank", packageName = "com.bank", title = "Debited", text = "Rs 500", category = null, at = 5))
+            assertEquals(1, db.capturedNotifications().since(0, 10).size)
         } finally {
             db.close()
             file.delete()
