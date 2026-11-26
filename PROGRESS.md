@@ -1,6 +1,17 @@
 # PROGRESS
 
-## Current: Phase 14, email actions (D36), branch `phase-14-email` (after PR #9)
+## Current: Phase 15.1, People view (D31, D37), branch `phase-15-people` (after PR #10)
+- [x] Code (2026-11-26): "prep me for my call with Priya", "catch me up on Ravi", "what's new with Mom" are
+  recognised on the phone (`PersonIntent`), or handed back by Claude (`private_data` kind person). The brief
+  (`person_brief`, Tier 1, through the security gate) asks call log, SMS, chats, Gmail and calendar in parallel
+  and says: next meeting with them, missed calls / last talked, latest chat and text, unread and latest email, and
+  which sources it couldn't check. Emails that only mention the name are dropped. Never sent to Claude.
+  People screen (menu → People): people you were in touch with lately (calls, texts, chats), tap for the brief,
+  Call button (same confirmation as voice). **416 unit tests, 0 failures.**
+- [ ] Device test: menu → People (list fills from calls/chats); tap someone; "prep me for my call with <name>"
+  by voice; with Gmail and calendar connected, check the meeting and email lines.
+
+## Phase 14, email actions (D36), PR #10
 - [x] Code (2026-11-26): `send_message` with channel email: new emails (address as said, the contact's email, or
   someone who emailed you) and replies (`reply: true`: newest inbox email from that person, else about that topic,
   answered in its Gmail thread with In-Reply-To/References and "Re:" subject). Same rules as SMS: full draft with
@@ -45,7 +56,7 @@
 | 11 | Consent + redaction, Private mode | Merged (#7). Needs device test |
 | 12 | Other app notifications (D35) | PR #9. Needs device test |
 | 13 | Voice actions: calls, new WhatsApp messages (D36) | PR #9. Needs device test |
-| 14 | Email actions: reply/send Gmail (D36) | Code done, branch `phase-14-email`. Needs device test |
+| 14 | Email actions: reply/send Gmail (D36) | PR #10. Needs device test |
 
 ## Phases 6-11 log (built as the old Phase 6; its step numbers are kept below)
 Step map: 2 = Phase 6, 3 = Phase 7, 4 = Phase 8, 5 = cancelled, 6 = Phase 11, 7 = Phase 9, 8 = Phase 10.
@@ -117,7 +128,7 @@ Step map: 2 = Phase 6, 3 = Phase 7, 4 = Phase 8, 5 = cancelled, 6 = Phase 11, 7 
     full draft, "send it", the countdown, Cancel); reply to a WhatsApp with its notification showing
   - Privacy: Private mode on/off; allow one feature and check the first-send preview
 
-## Next: Phase 15, JARVIS features (D31), starting with 15.1 People view (see below)
+## Next: Phase 15.2, meeting prep card before meetings (then 15.3 missed-call follow-ups)
 
 ## JARVIS gap list (what a real JARVIS would do that this one can't yet), kept current
 | Gap | Where it fits |

@@ -44,6 +44,7 @@ object PrivateDataTool {
         CHATS_FROM("chats_from", listOf("chats_from")),
         NOTIFICATIONS_RECENT("notifications_recent", listOf("notifications_recent")),
         NOTIFICATIONS_SEARCH("notifications_search", listOf("notifications_search")),
+        PERSON("person", listOf("person_brief")),
     }
 
     val definition = McpToolDef(
@@ -64,7 +65,9 @@ object PrivateDataTool {
             "sms_recent (latest texts); sms_from (texts from someone: name or number in item); chats_recent (recent " +
             "WhatsApp/Telegram/chat messages); chats_from (chat messages from a person or group: name in item); notifications_recent (notifications from " +
             "their other apps, \"what did I miss\"); notifications_search (notifications from one app or about something, " +
-            "e.g. a bank, a delivery, an order: put the app or topic in item). " +
+            "e.g. a bank, a delivery, an order: put the app or topic in item); person (everything recent with one person: " +
+            "calls, texts, chats, email, next meeting; \"prep me for my call with X\", \"what's going on with X\": put the " +
+            "name in item). " +
             "Pass several kinds " +
             "if the question covers several. For one specific stock or fund they own, pass its name as item. Don't " +
             "use it for public market questions (prices, fund facts) or general questions.",

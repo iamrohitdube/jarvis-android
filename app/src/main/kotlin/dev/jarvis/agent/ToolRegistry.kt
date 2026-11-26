@@ -1,7 +1,7 @@
 package dev.jarvis.agent
 
 /** Tool groups from CLAUDE.md section 4. */
-enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, FILES, CALLS, MESSAGING, NOTIFICATIONS, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
+enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, FILES, CALLS, MESSAGING, NOTIFICATIONS, PEOPLE, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
 
 enum class RiskLevel { READ, WRITE, ACTION }
 
@@ -50,6 +50,8 @@ object ToolRegistry {
     const val CHATS = "notifications"
     /** Other apps' notifications (D35). CHATS kept its older id "notifications". */
     const val ALERTS = "alerts"
+    /** Person briefs (Phase 15.1): built from the other phone sources. */
+    const val PEOPLE = "people"
 
     /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
     val LOCAL_SOURCES = setOf(CALENDAR, CALLS, RECORDINGS, SMS, CHATS, ALERTS)
@@ -110,6 +112,9 @@ object ToolRegistry {
             listOf("my notifications", "any notifications", "new notifications", "recent notifications", "what did i miss"), groupDefault = true, snapshot = true),
         local(ALERTS, ToolGroup.NOTIFICATIONS, "notifications_search", "Notifications from one app or about something",
             listOf("notifications from", "notification from", "notifications about", "notification about", "alerts from", "alert from"), itemArg = "query"),
+        // People (Phase 15.1): one person's calls, texts, chats, email and meetings, gathered on the phone. Tier 1.
+        local(PEOPLE, ToolGroup.PEOPLE, "person_brief", "Everything recent with one person: calls, messages, email, next meeting",
+            listOf("prep me for", "brief me on", "catch me up on", "what's new with"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */

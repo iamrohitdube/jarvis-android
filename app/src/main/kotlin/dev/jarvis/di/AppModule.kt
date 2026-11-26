@@ -301,8 +301,17 @@ object AppModule {
         calendar: dev.jarvis.connectors.phone.CalendarConnector, callLog: dev.jarvis.connectors.phone.CallLogConnector,
         recordings: dev.jarvis.connectors.phone.RecordingsConnector, sms: dev.jarvis.messaging.SmsConnector,
         chats: dev.jarvis.messaging.ChatsConnector, alerts: dev.jarvis.messaging.AlertsConnector,
+        people: dev.jarvis.agent.PeopleConnector,
     ): Map<String, @JvmSuppressWildcards Connector> =
-        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings, sms, chats, alerts).associateBy { it.id }
+        listOf<Connector>(indMoney, gmail, drive, calendar, callLog, recordings, sms, chats, alerts, people).associateBy { it.id }
+
+    /** Person briefs (Phase 15.1): reads the other phone sources, each with its own permission. */
+    @Provides @Singleton
+    fun people(
+        gmail: GmailConnector, calendar: dev.jarvis.connectors.phone.CalendarConnector,
+        callLog: dev.jarvis.connectors.phone.CallLogConnector, sms: dev.jarvis.messaging.SmsConnector,
+        chats: dev.jarvis.messaging.ChatsConnector, json: Json,
+    ) = dev.jarvis.agent.PeopleConnector(callLog, sms, chats, gmail, calendar, json)
 
     private fun hasPermissions(c: Context, permissions: List<String>) = permissions.all {
         androidx.core.content.ContextCompat.checkSelfPermission(c, it) == android.content.pm.PackageManager.PERMISSION_GRANTED

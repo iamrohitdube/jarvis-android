@@ -760,3 +760,17 @@ only read. Two new phases go before the D31 features, and every later phase move
   told to write only what the user asked; headers are built on the phone with line breaks stripped (no header
   injection) and plain-text UTF-8 bodies.
 
+## D37: People view (Phase 15.1), 2026-11-26
+- **Trigger:** phrases like "prep me for my call with X", "brief me on X", "catch me up on X", "what's new with X",
+  "show me X" are recognised on the phone (`PersonIntent`; "my day", "my calendar" and similar are excluded). Other
+  wording reaches Claude, which hands it back with `private_data` kind `person` and the name as item.
+- **Brief:** a phone-only connector (`people`, tool `person_brief`, group PEOPLE, Tier 1) calls the existing sources
+  with the name: `calls_with`, `sms_from`, `chats_from`, `gmail_search` (kept only when the sender matches every word
+  of the name), `calendar_search`. Each keeps its own permission; one that isn't allowed is skipped and named
+  ("Couldn't check: texts."). Order: next meeting, calls (missed since last talk, last talk and length), chats,
+  texts, email (unread count and latest subject).
+- **Privacy:** PEOPLE is not a consent feature, so a brief is never sent to Claude, even redacted. It goes through
+  the same security gate and Private mode as every personal read, and is audited.
+- **Screen:** menu → People: recent people from calls, texts and chats (unknown numbers left out), a name box, the
+  brief, and a Call button that uses the voice-call confirmation (D36).
+

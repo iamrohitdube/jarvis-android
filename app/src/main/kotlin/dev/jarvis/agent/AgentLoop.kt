@@ -120,6 +120,14 @@ class AgentLoop(
         }
         // "net worth, fingerprint": the method word picks the auth path and is not sent anywhere.
         val (question, preferredMethod) = AuthMethodParser.extract(userText)
+        // "Prep me for my call with Priya": a person brief, on the phone behind the security gate (Phase 15.1).
+        PersonIntent.target(question)?.let { who ->
+            val spec = ToolRegistry.byName(PeopleConnector.BRIEF)
+            if (spec != null && connectors.containsKey(ToolRegistry.PEOPLE)) {
+                personalOnPhone(listOf(spec), who, question, preferredMethod, settings, bankFocus = false, allowRecipe = false)
+                return@flow
+            }
+        }
         // "Call Mom": handled on the phone at once (D36), no Claude request; works offline.
         if (placeCall != null) CallIntent.target(question)?.let { who ->
             emit(AgentEvent.Routed(LOCAL_MODEL, emptyList()))
