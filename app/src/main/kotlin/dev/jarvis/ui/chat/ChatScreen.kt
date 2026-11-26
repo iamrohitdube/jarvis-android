@@ -119,6 +119,7 @@ fun ChatScreen(
     onOpenHistory: () -> Unit,
     onOpenAudit: () -> Unit,
     onOpenSecurity: () -> Unit,
+    onOpenPeople: () -> Unit = {},
     vm: ChatViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -170,6 +171,7 @@ fun ChatScreen(
                     onUsage = { closeDrawerThen(onOpenUsage) },
                     onAudit = { closeDrawerThen(onOpenAudit) },
                     onSecurity = { closeDrawerThen(onOpenSecurity) },
+                    onPeople = { closeDrawerThen(onOpenPeople) },
                     onSettings = { closeDrawerThen(onOpenSettings) },
                 )
             }
@@ -361,6 +363,7 @@ private fun DrawerContent(
     onAudit: () -> Unit,
     onSecurity: () -> Unit,
     onSettings: () -> Unit,
+    onPeople: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 16.dp)) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -399,6 +402,7 @@ private fun DrawerContent(
             }
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        DrawerLink("People", AppIcons.Person, onPeople)
         DrawerLink("Usage", AppIcons.BarChart, onUsage)
         DrawerLink("Audit log", AppIcons.Policy, onAudit)
         DrawerLink("Security", AppIcons.Shield, onSecurity)

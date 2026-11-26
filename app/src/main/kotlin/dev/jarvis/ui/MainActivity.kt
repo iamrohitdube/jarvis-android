@@ -62,6 +62,7 @@ object Routes {
     const val HISTORY = "history"
     const val AUDIT = "audit"
     const val SECURITY = "security"
+    const val PEOPLE = "people"
 }
 
 @AndroidEntryPoint
@@ -163,6 +164,7 @@ private fun JarvisNavHost(initial: AppSettings) {
                 onOpenHistory = { nav.navigate(Routes.HISTORY) },
                 onOpenAudit = { nav.navigate(Routes.AUDIT) },
                 onOpenSecurity = { nav.navigate(Routes.SECURITY) },
+                onOpenPeople = { nav.navigate(Routes.PEOPLE) },
             )
         }
         composable(Routes.HISTORY) { HistoryScreen(onBack = { nav.popBackStack() }, onOpened = { nav.popBackStack() }) }
@@ -170,5 +172,6 @@ private fun JarvisNavHost(initial: AppSettings) {
         composable(Routes.SETTINGS) { SettingsScreen(onBack = { nav.popBackStack() }, onOpenSecurity = { nav.navigate(Routes.SECURITY) }) }
         composable(Routes.SECURITY) { SecurityScreen(onBack = { nav.popBackStack() }) }
         composable(Routes.USAGE) { UsageScreen(onBack = { nav.popBackStack() }) }
+        composable(Routes.PEOPLE) { dev.jarvis.ui.people.PeopleScreen(onBack = { nav.popBackStack() }) }
     }
 }
