@@ -1,7 +1,7 @@
 package dev.jarvis.agent
 
 /** Tool groups from CLAUDE.md section 4. */
-enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, FILES, CALLS, MESSAGING, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
+enum class ToolGroup { FINANCE, CAREER, CALENDAR, EMAIL, FILES, CALLS, MESSAGING, NOTIFICATIONS, NAVIGATION, PHONE_CONTROL, MEMORY, WEB, VISION }
 
 enum class RiskLevel { READ, WRITE, ACTION }
 
@@ -48,9 +48,11 @@ object ToolRegistry {
     const val RECORDINGS = "recordings"
     const val SMS = "sms"
     const val CHATS = "notifications"
+    /** Other apps' notifications (D35). CHATS kept its older id "notifications". */
+    const val ALERTS = "alerts"
 
     /** Sources read from the phone itself with an Android permission (no account): "allow access", not "sign in". */
-    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, RECORDINGS, SMS, CHATS)
+    val LOCAL_SOURCES = setOf(CALENDAR, CALLS, RECORDINGS, SMS, CHATS, ALERTS)
 
     val all: List<ToolSpec> = listOf(
         indmoney("networth_snapshot", "Total net worth, invested vs current, allocation, liabilities",
@@ -103,6 +105,11 @@ object ToolRegistry {
         local(SMS, ToolGroup.MESSAGING, "sms_from", "Texts from one person or number", listOf("sms from", "texts from", "text from"), itemArg = "query"),
         local(CHATS, ToolGroup.MESSAGING, "chats_recent", "Recent WhatsApp/Telegram/chat messages", listOf("whatsapp", "telegram", "chat messages", "new messages"), snapshot = true),
         local(CHATS, ToolGroup.MESSAGING, "chats_from", "Chat messages from one person or group", listOf("messages from", "whatsapp from"), itemArg = "query"),
+        // Other apps' notifications (D35): bank alerts, deliveries, reminders, captured on the phone. Tier 1.
+        local(ALERTS, ToolGroup.NOTIFICATIONS, "notifications_recent", "Notifications from other apps in the last day, by app",
+            listOf("my notifications", "any notifications", "new notifications", "recent notifications", "what did i miss"), groupDefault = true, snapshot = true),
+        local(ALERTS, ToolGroup.NOTIFICATIONS, "notifications_search", "Notifications from one app or about something",
+            listOf("notifications from", "notification from", "notifications about", "notification about", "alerts from", "alert from"), itemArg = "query"),
     )
 
     /** Phrases that select a group even when no single tool matched. */
@@ -118,6 +125,7 @@ object ToolRegistry {
         ToolGroup.FILES to listOf("google drive", "my drive", "my files", "my documents"),
         ToolGroup.CALLS to listOf("my calls", "call log", "phone calls"),
         ToolGroup.MESSAGING to listOf("my messages", "my texts", "whatsapp", "sms"),
+        ToolGroup.NOTIFICATIONS to listOf("my notifications", "my alerts"),
     )
 
     fun byName(name: String): ToolSpec? = all.firstOrNull { it.name == name }

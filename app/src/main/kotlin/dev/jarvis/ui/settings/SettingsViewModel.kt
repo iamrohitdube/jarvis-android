@@ -43,6 +43,7 @@ class SettingsViewModel @Inject constructor(
     private val recordingIndexer: dev.jarvis.connectors.phone.RecordingIndexer,
     private val transcripts: dev.jarvis.data.db.TranscriptDao,
     sentMessages: dev.jarvis.data.db.SentMessageDao,
+    private val capturedNotifications: dev.jarvis.data.db.CapturedNotificationDao,
     private val authCoordinator: dev.jarvis.security.AuthCoordinator,
     private val biometric: dev.jarvis.security.AndroidBiometricAvailability,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
@@ -390,6 +391,17 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setTrustedContacts(v: String) = viewModelScope.launch { repo.setTrustedContacts(v) }
+
+    // ---- Other app notifications (D35) ----
+    /** Turning it off deletes every kept notification. */
+    fun setReadAppNotifications(v: Boolean) = viewModelScope.launch {
+        repo.setReadAppNotifications(v)
+        if (!v) capturedNotifications.deleteAll()
+        audit.record(AuditEvent(AuditCategory.DATA, "app_notifications_switch", if (v) "on" else "off"))
+        refreshLocalSources()
+    }
+
+    fun setIgnoredNotificationApps(v: String) = viewModelScope.launch { repo.setIgnoredNotificationApps(v) }
 
     // ---- Call recordings (D30) ----
     val transcribedCount: StateFlow<Int> = transcripts.doneCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)

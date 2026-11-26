@@ -17,7 +17,7 @@
 
 ## Option C: APK from GitHub
 CI uploads `jarvis-debug-apk` as an artifact on every push. Download it, open it on the phone, and allow
-"Install unknown apps" for your browser or file manager when asked. Signed release APKs on GitHub Releases come in Phase 10.
+"Install unknown apps" for your browser or file manager when asked. Signed release APKs on GitHub Releases come in Phase 20.
 
 ## Requirements
 Android 10 (API 29) or newer.

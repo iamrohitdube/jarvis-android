@@ -553,6 +553,28 @@ class AgentLoopTest {
         assertFalse(llm.requests[0].body["tools"].toString().contains(SendMessageTool.NAME))
     }
 
+    // ---- Voice calling (D36) ----
+
+    @Test fun callSomeoneIsHandledOnThePhoneWithoutClaude() = runBlocking {
+        var who: String? = null
+        val llm = FakeLlm({ reply("should not be asked") })
+        val agent = AgentLoop(llm, emptyMap(), meter, allowAll, placeCall = { w -> who = w; "Calling Mom." })
+        val done = agent.run(emptyList(), "Jarvis, call Mom please", settings).toList().last() as AgentEvent.Finished
+        assertEquals("Calling Mom.", done.text)
+        assertEquals("Mom", who)
+        assertEquals(0, llm.requests.size)
+    }
+
+    @Test fun claudeCanAskForACall() = runBlocking {
+        var who: String? = null
+        val llm = FakeLlm({ reply("", stop = "tool_use", content = listOf(toolUse("c1", CallTool.NAME, """{"to":"Ravi Kumar"}"""))) })
+        val agent = AgentLoop(llm, emptyMap(), meter, allowAll, placeCall = { w -> who = w; "Calling Ravi Kumar." })
+        val done = agent.run(emptyList(), "get Ravi Kumar on the phone", settings).toList().last() as AgentEvent.Finished
+        assertEquals("Calling Ravi Kumar.", done.text)
+        assertEquals("Ravi Kumar", who)
+        assertTrue(llm.requests[0].body["tools"].toString().contains(CallTool.NAME))
+    }
+
     // ---- Consent (D29 step 6) and Private mode ----
 
     private class FakeConsent(val allowedGroups: Set<ToolGroup>, val approve: Boolean) : ConsentGate {

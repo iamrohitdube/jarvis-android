@@ -172,6 +172,16 @@ class ChatViewModel @Inject constructor(
             sendCoordinator.prompt.collect { p ->
                 if (p?.stage == dev.jarvis.messaging.SendPrompt.Stage.CONFIRM && p.id != asked && voice.voiceTurn) {
                     asked = p.id
+                    if (p.recipient.channel == dev.jarvis.messaging.Channel.CALL) {
+                        voice.ask("Call ${p.recipient.name}, ${p.recipient.detail}? Say call.") { answer ->
+                            when {
+                                dev.jarvis.messaging.CallPhrase.approves(answer) -> sendCoordinator.approve(byVoice = true)
+                                dev.jarvis.messaging.CallPhrase.cancels(answer) -> sendCoordinator.cancel()
+                                else -> Unit // unclear or silence: no call
+                            }
+                        }
+                        return@collect
+                    }
                     val channel = if (p.recipient.channel == dev.jarvis.messaging.Channel.SMS) "SMS" else p.recipient.detail + " message"
                     val how = if (p.voiceAllowed) "Say send it to send." else "Tap Send it on the screen to send."
                     voice.ask("$channel to ${p.recipient.name}: ${p.text}. $how") { answer ->
@@ -361,6 +371,7 @@ class ChatViewModel @Inject constructor(
     private fun toolLabel(name: String): String {
         if (name == dev.jarvis.agent.AgentLoop.RECIPE_ACTIVITY) return "Working it out…"
         if (name == dev.jarvis.agent.SendMessageTool.NAME) return "Preparing the message…"
+        if (name == dev.jarvis.agent.CallTool.NAME) return "Finding the number…"
         val spec = ToolRegistry.byName(name)
         return when (spec?.connectorId) {
             ToolRegistry.INDMONEY -> "Checking INDmoney…"

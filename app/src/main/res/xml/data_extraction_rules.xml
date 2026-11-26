@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Keystore-bound secrets cannot be restored on another device, and backups would copy tokens.
-     Exclude everything from cloud backup and device transfer. Phase 10 adds an explicit encrypted export. -->
+     Exclude everything from cloud backup and device transfer. Phase 20 adds an explicit encrypted export. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" />

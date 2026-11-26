@@ -170,6 +170,21 @@ interface CapturedMessageDao {
 }
 
 @Dao
+interface CapturedNotificationDao {
+    @Insert
+    suspend fun insert(n: CapturedNotificationEntity): Long
+
+    @Query("SELECT * FROM captured_notifications WHERE at >= :since ORDER BY at DESC LIMIT :limit")
+    suspend fun since(since: Long, limit: Int): List<CapturedNotificationEntity>
+
+    @Query("DELETE FROM captured_notifications WHERE at < :before")
+    suspend fun deleteOlderThan(before: Long)
+
+    @Query("DELETE FROM captured_notifications")
+    suspend fun deleteAll()
+}
+
+@Dao
 interface SentMessageDao {
     @Insert
     suspend fun insert(m: SentMessageEntity): Long

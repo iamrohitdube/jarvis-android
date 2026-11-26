@@ -22,6 +22,8 @@ enum class Channel(val wire: String, val label: String) {
     SMS("sms", "SMS"),
     /** A reply through another app's notification (WhatsApp, Telegram…): only to conversations with a live notification. */
     CHAT("chat", "chat reply"),
+    /** A phone call (D36): reuses the confirmation dialog; never chosen by [of]. */
+    CALL("call", "call"),
     ;
     companion object {
         fun of(wire: String?): Channel = when (wire?.lowercase(Locale.ENGLISH)) {
@@ -185,7 +187,7 @@ class Messenger(
         val matches = finder.find(channel, to, app)
         when {
             matches.isEmpty() -> return@withLock if (channel == Channel.SMS) "I can't find \"$to\" in your contacts."
-                else "There's no open ${app ?: "chat"} notification from \"$to\" to reply to. Replies work only while their message notification is showing."
+                else "I can't find \"$to\": no open ${app ?: "chat"} notification from them, and no contact of that name for WhatsApp."
             matches.size > 1 -> return@withLock "Which \"$to\"? " + matches.take(4).joinToString(", ") { "${it.name} (${it.detail})" } +
                 ". Say the full name."
         }
@@ -206,9 +208,10 @@ class Messenger(
         }
         val result = try { sender.send(recipient, text) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
         return@withLock if (result.isSuccess) {
-            sent.finish(id, clock(), "sent")
+            sent.finish(id, clock(), if (WhatsAppOpener.isNewChat(recipient)) "opened" else "sent")
             audit(AuditEvent(AuditCategory.TOOL, "send", "ok", tool = SEND_TOOL, detail = channel.wire))
-            "Sent to ${recipient.name}."
+            if (WhatsAppOpener.isNewChat(recipient)) "WhatsApp is open with your message to ${recipient.name}: tap send."
+            else "Sent to ${recipient.name}."
         } else {
             sent.finish(id, null, "failed")
             audit(AuditEvent(AuditCategory.TOOL, "send", "error", tool = SEND_TOOL, detail = channel.wire))

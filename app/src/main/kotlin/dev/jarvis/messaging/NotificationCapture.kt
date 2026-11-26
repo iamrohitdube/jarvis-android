@@ -15,6 +15,9 @@ import dev.jarvis.connectors.google.EmailFilter
 import dev.jarvis.connectors.google.EmailHeader
 import dev.jarvis.data.db.CapturedMessageDao
 import dev.jarvis.data.db.CapturedMessageEntity
+import dev.jarvis.data.db.CapturedNotificationDao
+import dev.jarvis.data.db.CapturedNotificationEntity
+import dev.jarvis.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -77,16 +80,19 @@ object ChatNotices {
 /**
  * Reads chat-message notifications (D29 step 8) into the local database so JARVIS can read them back and reply.
  * Only known chat apps; one-time codes skipped; content is untrusted DATA (never instructions). Enabled by the user
- * in Android's notification access settings.
+ * in Android's notification access settings. Other apps' notifications are kept too, but only while the user's
+ * "Other app notifications" switch is on (D35, [AppNotices]).
  */
 @AndroidEntryPoint
 class JarvisNotificationListener : NotificationListenerService() {
     @Inject lateinit var dao: CapturedMessageDao
+    @Inject lateinit var notices: CapturedNotificationDao
+    @Inject lateinit var settings: SettingsRepository
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName == packageName) return
-        val app = ChatNotices.APPS[sbn.packageName] ?: return
+        val app = ChatNotices.APPS[sbn.packageName] ?: return captureOther(sbn)
         val n = sbn.notification
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val notice = extract(app, sbn.packageName, n) ?: return
@@ -104,6 +110,41 @@ class JarvisNotificationListener : NotificationListenerService() {
             )
             dao.deleteOlderThan(System.currentTimeMillis() - KEEP_MS)
         }
+    }
+
+    /** Other apps (D35): kept only while the user's "Other app notifications" switch is on. */
+    private fun captureOther(sbn: StatusBarNotification) {
+        val n = sbn.notification
+        val extras = n.extras
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val text = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
+        val notice = AppNotice(
+            app = appName(sbn.packageName), packageName = sbn.packageName, title = title.take(120), text = text.take(500),
+            category = n.category,
+            ongoing = n.flags and Notification.FLAG_ONGOING_EVENT != 0 || n.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
+            groupSummary = n.flags and Notification.FLAG_GROUP_SUMMARY != 0,
+            secret = n.visibility == Notification.VISIBILITY_SECRET,
+        )
+        scope.launch {
+            val s = settings.current()
+            if (!s.readAppNotifications || s.privateMode) return@launch
+            if (!AppNotices.keep(notice, packageName, AppNotices.ignored(s.ignoredNotificationApps)) || !AppNotices.firstTime(notice)) return@launch
+            notices.insert(
+                CapturedNotificationEntity(
+                    app = notice.app, packageName = notice.packageName, title = notice.title, text = notice.text,
+                    category = notice.category, at = sbn.postTime,
+                )
+            )
+            notices.deleteOlderThan(System.currentTimeMillis() - AppNotices.KEEP_MS)
+        }
+    }
+
+    private val labels = ConcurrentHashMap<String, String>()
+
+    /** The app's name as the launcher shows it (needs the launcher <queries> entry on Android 11+). */
+    private fun appName(pkg: String): String = labels.getOrPut(pkg) {
+        runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }
+            .getOrNull()?.takeIf { it.isNotBlank() } ?: AppNotices.nameFromPackage(pkg)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
