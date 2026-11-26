@@ -170,6 +170,8 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.viewmodel.compose)
+    // Scheduled jobs (CLAUDE.md section 1): meeting prep (Phase 15.2), later Briefing/Monitor.
+    implementation(libs.androidx.work.runtime)
 
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)

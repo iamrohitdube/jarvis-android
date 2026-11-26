@@ -129,7 +129,7 @@ object PhoneAnswers {
         ToolGroup.FILES -> DriveAnswers.render(spec.name, raw, now)
         ToolGroup.MESSAGING -> MessageAnswers.render(spec.name, raw, now)
         ToolGroup.NOTIFICATIONS -> NotificationAnswers.render(spec.name, raw, now)
-        ToolGroup.PEOPLE -> PeopleAnswers.render(raw, now)
+        ToolGroup.PEOPLE -> if (spec.name == PeopleConnector.MEETING) PeopleAnswers.renderMeeting(raw, now) else PeopleAnswers.render(raw, now)
         ToolGroup.CALLS -> if (spec.connectorId == ToolRegistry.RECORDINGS) RecordingAnswers.render(spec.name, raw, now) else CallAnswers.render(spec.name, raw, now)
         else -> FinanceAnswers.render(spec.name, raw, question, item)
     }

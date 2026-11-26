@@ -120,6 +120,13 @@ class AgentLoop(
         }
         // "net worth, fingerprint": the method word picks the auth path and is not sent anywhere.
         val (question, preferredMethod) = AuthMethodParser.extract(userText)
+        // "Prep me for my next meeting": the meeting and its people, on the phone (Phase 15.2).
+        if (MeetingPrep.wantsNextMeeting(question) && connectors.containsKey(ToolRegistry.PEOPLE)) {
+            ToolRegistry.byName(PeopleConnector.MEETING)?.let { spec ->
+                personalOnPhone(listOf(spec), null, question, preferredMethod, settings, bankFocus = false, allowRecipe = false)
+                return@flow
+            }
+        }
         // "Prep me for my call with Priya": a person brief, on the phone behind the security gate (Phase 15.1).
         PersonIntent.target(question)?.let { who ->
             val spec = ToolRegistry.byName(PeopleConnector.BRIEF)

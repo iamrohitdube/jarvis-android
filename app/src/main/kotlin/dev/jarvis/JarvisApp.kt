@@ -54,6 +54,9 @@ class JarvisApp : Application() {
         // System broadcasts only; not exported to other apps.
         ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
 
+        // Meeting prep cards (Phase 15.2): a periodic check; each run reads its switch.
+        runCatching { dev.jarvis.service.MeetingPrepWorker.schedule(this) }
+
         // Housekeeping off the main thread: one-time Phase 1 import, then retention pruning.
         appScope.launch {
             runCatching { usageMeter.importLegacy(legacyUsageStore, json) }

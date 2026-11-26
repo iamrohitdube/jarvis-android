@@ -85,6 +85,16 @@ class MainActivity : ComponentActivity() {
     /** Keeps the launch screen up until settings have loaded, so the first frame is the real UI. */
     @Volatile private var ready = false
 
+    /** A tapped meeting card opens that person's brief (Phase 15.2). */
+    private fun takePersonExtra(intent: android.content.Intent?) {
+        intent?.getStringExtra(dev.jarvis.service.PeopleLaunch.EXTRA_PERSON)?.let { dev.jarvis.service.PeopleLaunch.pending.value = it }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        takePersonExtra(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         splash.setKeepOnScreenCondition { !ready }
@@ -98,6 +108,7 @@ class MainActivity : ComponentActivity() {
             androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        takePersonExtra(intent)
         // Launch the system fingerprint prompt whenever the coordinator reaches that stage.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -143,6 +154,10 @@ private fun JarvisNavHost(initial: AppSettings) {
     val nav = rememberNavController()
     // Decide the start screen once; later settings changes must not reset navigation.
     val start = remember { if (initial.onboardingComplete) Routes.CHAT else Routes.ONBOARDING }
+    val pendingPerson by dev.jarvis.service.PeopleLaunch.pending.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(pendingPerson) {
+        if (pendingPerson != null && initial.onboardingComplete) nav.navigate(Routes.PEOPLE) { launchSingleTop = true }
+    }
     NavHost(
         navController = nav,
         startDestination = start,

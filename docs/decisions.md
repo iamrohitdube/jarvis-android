@@ -774,3 +774,20 @@ only read. Two new phases go before the D31 features, and every later phase move
 - **Screen:** menu → People: recent people from calls, texts and chats (unknown numbers left out), a name box, the
   brief, and a Call button that uses the voice-call confirmation (D36).
 
+## D38: Meeting prep cards (Phase 15.2), 2026-11-26
+- **When:** WorkManager (2.12.0, first use; CLAUDE.md section 1) runs a periodic job every 15 minutes, the
+  minimum. Each run takes timed meetings starting within 35 minutes that haven't had a card, so a card arrives
+  roughly 20-35 minutes ahead (later under Doze). No exact alarms: that needs a special permission and a card
+  doesn't need to-the-minute timing.
+- **Who:** names come from the title: after "with" ("1:1 with Priya", "Call with Ravi Kumar re budget"), or names
+  paired by "/", "<>", "&", "+", "x", "vs" ("Priya / Rohit sync"). Titles without either ("Sprint planning") name
+  nobody. At most 3 people. Calendar attendees are not read (a later improvement).
+- **Card:** "In 20 min: <title>", location, then each person's brief lines (calls, chats, texts, email). Lock
+  screen: a public version "Meeting soon" only. Tap opens the People screen with the first person's brief.
+- **Privacy:** made on the phone from the same sources as the People view; never sent to Claude. Only hashed
+  (title + start) keys of sent cards are kept (last 200). Settings → Phone data → Meeting prep cards (on by
+  default, since nothing leaves the phone and the lock screen hides it); Private mode and missing calendar or
+  notification permission stop it.
+- **Voice:** "prep me for my next meeting" / "what's my next meeting about" gives the same for the next meeting in
+  24 hours (`meeting_prep`, Tier 1, security gate).
+
